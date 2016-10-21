@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base data-ice="baseUrl" href="../../">
+  <title data-ice="title">tests/public_client.js | API Document</title>
+  <link type="text/css" rel="stylesheet" href="css/style.css">
+  <link type="text/css" rel="stylesheet" href="css/prettify-tomorrow.css">
+  <script src="script/prettify/prettify.js"></script>
+  
+  
+  <script src="script/manual.js"></script>
+</head>
+<body class="layout-container" data-ice="rootContainer">
+
+<header>
+  <a href="./">Home</a>
+  
+  <a href="identifiers.html">Reference</a>
+  <a href="source.html">Source</a>
+  <a href="test.html" data-ice="testLink">Test</a>
+  
+  <div class="search-box">
+  <span>
+    <img src="./image/search.png">
+    <span class="search-input-edge"></span><input class="search-input"><span class="search-input-edge"></span>
+  </span>
+    <ul class="search-result"></ul>
+  </div>
+</header>
+
+<nav class="navigation" data-ice="nav"><div>
+  <ul>
+    
+  <li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/orderbook.js~OrderBook.html">OrderBook</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/orderbook_sync.js~OrderBookSync.html">OrderBookSync</a></span></span></li>
+<li data-ice="doc"><div data-ice="dirPath" class="nav-dir-path">clients</div><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/authenticated.js~AuthenticatedClient.html">AuthenticatedClient</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/public.js~PublicClient.html">PublicClient</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/websocket.js~WebSocketClient.html">WebSocketClient</a></span></span></li>
+</ul>
+</div>
+</nav>
+
+<div class="content" data-ice="content"><h1 data-ice="title">tests/public_client.js</h1>
+<pre class="source-code line-number raw-source-code"><code class="prettyprint linenums" data-ice="content">/**
+ &gt; THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ &gt; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ &gt; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ &gt; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ &gt; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ &gt; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ &gt; SOFTWARE.
+ */
+
+/* eslint camelcase: [&quot;error&quot;, {properties: &quot;never&quot;}] */
+
+let assert = require(&apos;assert&apos;);
+let nock = require(&apos;nock&apos;);
+
+let Gdax = require(&apos;../index.js&apos;);
+let publicClient = new Gdax.PublicClient();
+
+let EXCHANGE_API_URL = &apos;https://api.gdax.com&apos;;
+
+test(&apos;get product trades&apos;, (done) =&gt; {
+  let expectedResponse = [{
+    &apos;time&apos;: &apos;2014-11-07T22:19:28.578544Z&apos;,
+    &apos;trade_id&apos;: 74,
+    &apos;price&apos;: &apos;10.00000000&apos;,
+    &apos;size&apos;: &apos;0.01000000&apos;,
+    &apos;side&apos;: &apos;buy&apos;,
+  }, {
+    &apos;time&apos;: &apos;2014-11-07T01:08:43.642366Z&apos;,
+    &apos;trade_id&apos;: 73,
+    &apos;price&apos;: &apos;100.00000000&apos;,
+    &apos;size&apos;: &apos;0.01000000&apos;,
+    &apos;side&apos;: &apos;sell&apos;,
+  }];
+
+  nock(EXCHANGE_API_URL)
+    .get(&apos;/products/BTC-USD/trades&apos;)
+    .reply(200, expectedResponse);
+
+  publicClient.getProductTrades((err, resp, data) =&gt; {
+    assert.ifError(err);
+    assert.deepEqual(data, expectedResponse);
+
+    nock.cleanAll();
+    done();
+  });
+});
+
+test(&apos;public client should return values&apos;, (done) =&gt; {
+  // noinspection Eslint
+  nock(EXCHANGE_API_URL)
+    .get(&apos;/products/BTC-USD/ticker&apos;)
+    .reply(200, {
+      trade_id: &apos;test-id&apos;,
+      price: &apos;9.00&apos;,
+      size: &apos;5&apos;,
+    });
+
+  publicClient.getProductTicker((err, resp, data) =&gt; {
+    assert.ifError(err);
+
+    assert.equal(data.trade_id, &apos;test-id&apos;);
+    assert(data.price, &apos;9.00&apos;);
+    assert(data.size, &apos;5&apos;);
+
+    nock.cleanAll();
+    done();
+  });
+});
+
+test(&apos;public client should stream trades&apos;, function(done) {
+  // noinspection Eslint
+  this.timeout(6000);
+
+  let last = 8408014;
+
+  publicClient.getProductTradeStream(last, 8409426)
+    .on(&apos;data&apos;, (data) =&gt; {
+      let current = data.trade_id;
+      assert.equal(typeof current, &apos;number&apos;);
+      assert.equal(current, last + 1,
+        `${current} is next in series, last: ${last}`
+      );
+      last = current;
+    })
+    .on(&apos;end&apos;, () =&gt; {
+      assert.equal(last, 8409425, &apos;ended on &apos; + last);
+      done();
+    });
+});
+
+test(&apos;public client should stream trades with function&apos;, function(done) {
+  // noinspection Eslint
+  this.timeout(6000);
+
+  let last = 8408014;
+
+  publicClient.getProductTradeStream(last, (trade) =&gt; {
+    return Date.parse(trade.time) &gt;= 1463068800000;
+  })
+    .on(&apos;data&apos;, (data) =&gt; {
+      let current = data.trade_id;
+      assert.equal(typeof current, &apos;number&apos;);
+      assert.equal(current, last + 1,
+        `${current} is next in series, last: ${last}`
+      );
+      last = current;
+    })
+    .on(&apos;end&apos;, () =&gt; {
+      assert.equal(last, 8409426, last);
+      done();
+    });
+});
+</code></pre>
+
+</div>
+
+<footer class="footer">
+  Generated by <a href="https://esdoc.org">ESDoc<span data-ice="esdocVersion">(0.4.8)</span></a>
+</footer>
+
+<script src="script/search_index.js"></script>
+<script src="script/search.js"></script>
+<script src="script/pretty-print.js"></script>
+<script src="script/inherited-summary.js"></script>
+<script src="script/test-summary.js"></script>
+<script src="script/inner-link.js"></script>
+<script src="script/patch-for-local.js"></script>
+</body>
+</html>

@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base data-ice="baseUrl" href="../../">
+  <title data-ice="title">lib/orderbook.js | API Document</title>
+  <link type="text/css" rel="stylesheet" href="css/style.css">
+  <link type="text/css" rel="stylesheet" href="css/prettify-tomorrow.css">
+  <script src="script/prettify/prettify.js"></script>
+  
+  
+  <script src="script/manual.js"></script>
+</head>
+<body class="layout-container" data-ice="rootContainer">
+
+<header>
+  <a href="./">Home</a>
+  
+  <a href="identifiers.html">Reference</a>
+  <a href="source.html">Source</a>
+  <a href="test.html" data-ice="testLink">Test</a>
+  
+  <div class="search-box">
+  <span>
+    <img src="./image/search.png">
+    <span class="search-input-edge"></span><input class="search-input"><span class="search-input-edge"></span>
+  </span>
+    <ul class="search-result"></ul>
+  </div>
+</header>
+
+<nav class="navigation" data-ice="nav"><div>
+  <ul>
+    
+  <li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/orderbook.js~OrderBook.html">OrderBook</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/orderbook_sync.js~OrderBookSync.html">OrderBookSync</a></span></span></li>
+<li data-ice="doc"><div data-ice="dirPath" class="nav-dir-path">clients</div><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/authenticated.js~AuthenticatedClient.html">AuthenticatedClient</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/public.js~PublicClient.html">PublicClient</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/websocket.js~WebSocketClient.html">WebSocketClient</a></span></span></li>
+</ul>
+</div>
+</nav>
+
+<div class="content" data-ice="content"><h1 data-ice="title">lib/orderbook.js</h1>
+<pre class="source-code line-number raw-source-code"><code class="prettyprint linenums" data-ice="content">/**
+ &gt; THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ &gt; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ &gt; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ &gt; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ &gt; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ &gt; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ &gt; SOFTWARE.
+ */
+
+&apos;use strict&apos;;
+
+const RBTree = require(&apos;bintrees&apos;).RBTree;
+const num = require(&apos;num&apos;);
+const assert = require(&apos;assert&apos;);
+
+/**
+ * OrderBook
+ */
+class OrderBook {
+  /**
+   * Create a new OrderBook
+   */
+  constructor() {
+    // Orders hashed by ID
+    this._ordersByID = {};
+
+    this._bids = new RBTree((a, b) =&gt; {
+      return a.price.cmp(b.price);
+    });
+
+    this._asks = new RBTree((a, b) =&gt; {
+      return a.price.cmp(b.price);
+    });
+  }
+
+  /**
+   * _getTree
+   * @param {string} side which side of the trade
+   * @return {RBTree} The RBTree
+   * @private
+   */
+  _getTree(side) {
+    return side == &apos;buy&apos; ? this._bids : this._asks;
+  }
+
+  /**
+   * state
+   * @param {OrderBook} book The OrderBook
+   * @return {OrderBook} book A OrderBook
+   */
+  state(book) {
+    if (book) {
+      book.bids.forEach((order) =&gt; {
+        order = {
+          id: order[2],
+          side: &apos;buy&apos;,
+          price: num(order[0]),
+          size: num(order[1]),
+        };
+        this.add(order);
+      });
+
+      book.asks.forEach((order) =&gt; {
+        order = {
+          id: order[2],
+          side: &apos;sell&apos;,
+          price: num(order[0]),
+          size: num(order[1]),
+        };
+        this.add(order);
+      });
+    } else {
+      book = {
+        asks: [],
+        bids: [],
+      };
+      this._bids.reach((bid) =&gt; {
+        bid.orders.forEach((order) =&gt; {
+          book.bids.push(order);
+        });
+      });
+
+      this._asks.each((ask) =&gt; {
+        ask.orders.forEach((order) =&gt; {
+          book.asks.push(order);
+        });
+      });
+
+      return book;
+    }
+  }
+
+  /**
+   * get Order by OrderId
+   * @param {string} orderId
+   * @return {object} order based on id
+   */
+  get(orderId) {
+    return this._ordersByID[orderId];
+  }
+
+  /**
+   * Add order
+   * @param {object} order The Order
+   */
+  add(order) {
+    order = {
+      id: order.order_id || order.id,
+      side: order.side,
+      price: num(order.price),
+      size: num(order.size || order.remaining_size),
+    };
+
+    let tree = this._getTree(order.side);
+    let node = tree.find({price: order.price});
+
+    if (!node) {
+      node = {
+        price: order.price,
+        orders: [],
+      };
+      tree.insert(node);
+    }
+
+    node.orders.push(order);
+    this._ordersByID[order.id] = order;
+  }
+
+  /**
+   * Remove Order by OrderId
+   * @param {string} orderId The OrderID
+   */
+  remove(orderId) {
+    let order = this.get(orderId);
+
+    if (!order) {
+      return;
+    }
+
+    let tree = this._getTree(order.side);
+    let node = tree.find({price: order.price});
+    assert(node);
+    let orders = node.orders;
+
+    orders.splice(orders.indexOf(order), 1);
+
+    if (orders.length === 0) {
+      tree.remove(node);
+    }
+
+    delete this._ordersByID[order.id];
+  }
+
+  /**
+   * match parameter
+   * @param {object} match Object Match
+   */
+  match(match) {
+    let size = num(match.size);
+    let price = num(match.price);
+    let tree = this._getTree(match.side);
+    let node = tree.find({price: price});
+    assert(node);
+
+    let order = node.orders[0];
+    assert.equal(order.id, match.maker_order_id);
+
+    order.size = order.size.sub(size);
+    this._ordersByID[order.id] = order;
+
+    assert(order.size &gt;= 0);
+
+    if (order.size.eq(0)) {
+      this.remove(order.id);
+    }
+  }
+
+  /**
+   * change
+   * @param {Object} change The changed object
+   */
+  change(change) {
+    let size = num(change.new_size);
+    let price = num(change.price);
+    let order = this.get(change.order_id);
+    let tree = this._getTree(change.side);
+    let node = tree.find({price: price});
+
+    if (!node || node.orders.indexOf(order) &lt; 0) {
+      return;
+    }
+
+    let nodeOrder = node.orders[node.orders.indexOf(order)];
+
+    let newSize = parseFloat(order.size);
+    let oldSize = parseFloat(change.old_size);
+    assert.equal(oldSize, newSize);
+
+    nodeOrder.size = size;
+    this._ordersByID[nodeOrder.id] = nodeOrder;
+  }
+}
+
+/**
+ *
+ * @type {OrderBook}
+ */
+module.exports = OrderBook;
+</code></pre>
+
+</div>
+
+<footer class="footer">
+  Generated by <a href="https://esdoc.org">ESDoc<span data-ice="esdocVersion">(0.4.8)</span></a>
+</footer>
+
+<script src="script/search_index.js"></script>
+<script src="script/search.js"></script>
+<script src="script/pretty-print.js"></script>
+<script src="script/inherited-summary.js"></script>
+<script src="script/test-summary.js"></script>
+<script src="script/inner-link.js"></script>
+<script src="script/patch-for-local.js"></script>
+</body>
+</html>

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base data-ice="baseUrl" href="../../../">
+  <title data-ice="title">lib/clients/public.js | API Document</title>
+  <link type="text/css" rel="stylesheet" href="css/style.css">
+  <link type="text/css" rel="stylesheet" href="css/prettify-tomorrow.css">
+  <script src="script/prettify/prettify.js"></script>
+  
+  
+  <script src="script/manual.js"></script>
+</head>
+<body class="layout-container" data-ice="rootContainer">
+
+<header>
+  <a href="./">Home</a>
+  
+  <a href="identifiers.html">Reference</a>
+  <a href="source.html">Source</a>
+  <a href="test.html" data-ice="testLink">Test</a>
+  
+  <div class="search-box">
+  <span>
+    <img src="./image/search.png">
+    <span class="search-input-edge"></span><input class="search-input"><span class="search-input-edge"></span>
+  </span>
+    <ul class="search-result"></ul>
+  </div>
+</header>
+
+<nav class="navigation" data-ice="nav"><div>
+  <ul>
+    
+  <li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/orderbook.js~OrderBook.html">OrderBook</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/orderbook_sync.js~OrderBookSync.html">OrderBookSync</a></span></span></li>
+<li data-ice="doc"><div data-ice="dirPath" class="nav-dir-path">clients</div><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/authenticated.js~AuthenticatedClient.html">AuthenticatedClient</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/public.js~PublicClient.html">PublicClient</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/websocket.js~WebSocketClient.html">WebSocketClient</a></span></span></li>
+</ul>
+</div>
+</nav>
+
+<div class="content" data-ice="content"><h1 data-ice="title">lib/clients/public.js</h1>
+<pre class="source-code line-number raw-source-code"><code class="prettyprint linenums" data-ice="content">/**
+ &gt; THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ &gt; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ &gt; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ &gt; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ &gt; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ &gt; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ &gt; SOFTWARE.
+ */
+
+&apos;use strict&apos;;
+
+const isNode = require(&apos;detect-node&apos;);
+const request = isNode ? require(&apos;request&apos;) : require(&apos;browser-request&apos;);
+const Readable = require(&apos;stream&apos;).Readable;
+
+const API_LIMIT = 100;
+
+/**
+ * PublicClient
+ */
+class PublicClient {
+  /**
+   * Create new Public Client
+   * @param {string} productID The Product
+   * @param {string} apiURI URI of the resource
+   */
+  constructor(productID, apiURI) {
+    this.productID = productID || &apos;BTC-USD&apos;;
+    this.apiURI = apiURI || &apos;https://api.gdax.com&apos;;
+  }
+
+  /**
+   * get
+   * @param {...object} args The arguments
+   */
+  get(...args) {
+    this.request(&apos;get&apos;, ...args);
+  }
+
+  /**
+   * post
+   * @param {...object} args The arguments
+   */
+  post(...args) {
+    this.request(&apos;post&apos;, ...args);
+  }
+
+  /**
+   * put
+   * @param {...object} args The arguments
+   */
+  put(...args) {
+    this.request(&apos;put&apos;, ...args);
+  }
+
+  /**
+   * delete
+   * @param {...object} args The arguments
+   */
+  delete(...args) {
+    this.request(&apos;delete&apos;, ...args);
+  }
+
+  /**
+   * addHeaders
+   * @param {object} obj The headers to add
+   * @param {object} additional Extra headers
+   * @return {object} The header object
+   */
+  addHeaders(obj, additional) {
+    obj.headers = obj.headers || {};
+    return Object.assign(obj.headers, {
+      &apos;User-Agent&apos;: &apos;gdax-node-client&apos;,
+      &apos;Accept&apos;: &apos;application/json&apos;,
+      &apos;Content-Type&apos;: &apos;application/json&apos;,
+    }, additional);
+  }
+
+  /**
+   * makeRelativeURI
+   * @param {array|string} parts The URI parts
+   * @return {string} Joined parts
+   */
+  makeRelativeURI(parts) {
+    if (!Array.isArray(parts)) parts = [parts];
+    return `/${parts.join(&apos;/&apos;)}`;
+  }
+
+  /**
+   * makeAbsoluteURI
+   * @param {string} relativeURI A relative path
+   * @return {string} The Absolute path
+   */
+  makeAbsoluteURI(relativeURI) {
+    return `${this.apiURI}${relativeURI}`;
+  }
+
+  /**
+   * makeRequestCallback
+   * @param {function} callback The callback function
+   * @return {function} A callback function
+   */
+  makeRequestCallback(callback) {
+    return (err, response, data) =&gt; {
+      try {
+        data = JSON.parse(data);
+      } catch (e) {
+        data = null;
+      }
+      callback(err, response, data);
+    };
+  }
+
+  /**
+   * request
+   * @param {string} method Type of Request
+   * @param {array|string} uriParts URI array or string
+   * @param {object|function} opts The options or callback
+   * @param {function|null} callback The callback function
+   */
+  request(method, uriParts, opts, callback) {
+    opts = opts || {};
+    if (!callback &amp;&amp; (typeof opts === &apos;function&apos;)) {
+      callback = opts;
+      opts = {};
+    }
+    if (!callback) {
+      throw new Error(&apos;Must supply a callback.&apos;);
+    }
+    Object.assign(opts, {
+      &apos;method&apos;: method.toUpperCase(),
+      &apos;uri&apos;: this.makeAbsoluteURI(this.makeRelativeURI(uriParts)),
+    });
+    this.addHeaders(opts);
+    request(opts, this.makeRequestCallback(callback));
+  }
+
+  /**
+   * getProducts
+   * @param {function} callback The callback function
+   * @return {object} The Response
+   */
+  getProducts(callback) {
+    return this.get(&apos;products&apos;, callback);
+  }
+
+  /**
+   * getProductOrderBook
+   * @param {object|function} args The args or callback
+   * @param {function|null} callback The callback function
+   * @return {object} The Response
+   */
+  getProductOrderBook(args, callback) {
+    args = args || {};
+    if (!callback &amp;&amp; (typeof args === &apos;function&apos;)) {
+      callback = args;
+      args = {};
+    }
+
+    let opts = {&apos;qs&apos;: args};
+    return this.get([&apos;products&apos;, this.productID, &apos;book&apos;], opts, callback);
+  }
+
+  /**
+   * getProductTicker
+   * @param {function} callback The callback function
+   * @return {object} The Response
+   */
+  getProductTicker(callback) {
+    return this.get([&apos;products&apos;, this.productID, &apos;ticker&apos;], callback);
+  }
+
+  /**
+   * getProductTrades
+   * @param {object|function} args The args or callback
+   * @param {function|null} callback The callback function
+   * @return {object} The Response
+   */
+  getProductTrades(args, callback) {
+    args = args || {};
+    if (!callback &amp;&amp; (typeof args === &apos;function&apos;)) {
+      callback = args;
+      args = {};
+    }
+
+    let opts = {&apos;qs&apos;: args};
+    return this.get([&apos;products&apos;, this.productID, &apos;trades&apos;], opts, callback);
+  }
+
+  /**
+   * getProductTradeStream
+   * @param {number} tradesFrom Number of Trades from
+   * @param {number|function} tradesTo Number of Trades to or callback
+   * @return {object} Stream of trades
+   */
+  getProductTradeStream(tradesFrom, tradesTo) {
+    let shouldStop = null;
+
+    if (typeof tradesTo === &apos;function&apos;) {
+      shouldStop = tradesTo;
+      tradesTo = null;
+    }
+
+    let rs = new Readable({objectMode: true});
+    let started = false;
+
+    rs._read = () =&gt; {
+      if (!started) {
+        started = true;
+        this.fetchTrades(this, rs, tradesFrom, tradesTo, shouldStop, 0);
+      }
+    };
+
+    return rs;
+  }
+
+  /**
+   * fetchTrades
+   * @param {object} ctx The context
+   * @param {object} stream The Stream
+   * @param {number} tradesFrom Number of trades from
+   * @param {number} tradesTo Number of trades to
+   * @param {boolean|function} shouldStop Should it stop
+   */
+  fetchTrades(ctx, stream, tradesFrom, tradesTo, shouldStop) {
+    let after = tradesFrom + API_LIMIT + 1;
+    let loop = true;
+
+    if (tradesTo &amp;&amp; tradesTo &lt;= after) {
+      after = tradesTo;
+      loop = false;
+    }
+
+    let opts = {before: tradesFrom, after: after, limit: API_LIMIT};
+
+    this.getProductTrades(opts, (err, resp, data) =&gt; {
+      if (err) {
+        stream.emit(&apos;error&apos;, err);
+        return;
+      }
+
+      if (resp.statusCode === 429) {
+        // rate-limited, try again
+        setTimeout(() =&gt; {
+          this.fetchTrades(ctx, stream, tradesFrom, tradesTo, shouldStop);
+        }, 900);
+        return;
+      }
+
+      if (resp.statusCode !== 200) {
+        stream.emit(&apos;error&apos;,
+          new Error(&apos;Encountered status code &apos; + resp.statusCode)
+        );
+      }
+
+      for (let i = data.length - 1; i &gt;= 0; i--) {
+        if (shouldStop &amp;&amp; shouldStop(data[i])) {
+          stream.push(null);
+          return;
+        }
+
+        stream.push(data[i]);
+      }
+
+      if (!loop) {
+        stream.push(null);
+        return;
+      }
+      let currentFrom = tradesFrom + API_LIMIT;
+      this.fetchTrades(ctx, stream, currentFrom, tradesTo, shouldStop);
+    });
+  }
+
+  /**
+   * getProductHistoricRates
+   * @param {object|function} args The args or callback
+   * @param {function|null} callback The callback function
+   * @return {object} The Response
+   */
+  getProductHistoricRates(args, callback) {
+    args = args || {};
+    if (!callback &amp;&amp; (typeof args === &apos;function&apos;)) {
+      callback = args;
+      args = {};
+    }
+
+    let opts = {&apos;qs&apos;: args};
+    return this.get([&apos;products&apos;, this.productID, &apos;candles&apos;], opts, callback);
+  }
+
+  /**
+   * getProduct24HrStats
+   * @param {function} callback The callback function
+   * @return {object} The Response
+   */
+  getProduct24HrStats(callback) {
+    return this.get([&apos;products&apos;, this.productID, &apos;stats&apos;], callback);
+  }
+
+  /**
+   * getCurrencies
+   * @param {function} callback The callback function
+   * @return {object} The Response
+   */
+  getCurrencies(callback) {
+    return this.get(&apos;currencies&apos;, callback);
+  }
+
+  /**
+   * getTime
+   * @param {function} callback The callback function
+   * @return {object} The Response
+   */
+  getTime(callback) {
+    return this.get(&apos;time&apos;, callback);
+  }
+}
+
+module.exports = PublicClient;
+</code></pre>
+
+</div>
+
+<footer class="footer">
+  Generated by <a href="https://esdoc.org">ESDoc<span data-ice="esdocVersion">(0.4.8)</span></a>
+</footer>
+
+<script src="script/search_index.js"></script>
+<script src="script/search.js"></script>
+<script src="script/pretty-print.js"></script>
+<script src="script/inherited-summary.js"></script>
+<script src="script/test-summary.js"></script>
+<script src="script/inner-link.js"></script>
+<script src="script/patch-for-local.js"></script>
+</body>
+</html>

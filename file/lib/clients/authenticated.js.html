@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base data-ice="baseUrl" href="../../../">
+  <title data-ice="title">lib/clients/authenticated.js | API Document</title>
+  <link type="text/css" rel="stylesheet" href="css/style.css">
+  <link type="text/css" rel="stylesheet" href="css/prettify-tomorrow.css">
+  <script src="script/prettify/prettify.js"></script>
+  
+  
+  <script src="script/manual.js"></script>
+</head>
+<body class="layout-container" data-ice="rootContainer">
+
+<header>
+  <a href="./">Home</a>
+  
+  <a href="identifiers.html">Reference</a>
+  <a href="source.html">Source</a>
+  <a href="test.html" data-ice="testLink">Test</a>
+  
+  <div class="search-box">
+  <span>
+    <img src="./image/search.png">
+    <span class="search-input-edge"></span><input class="search-input"><span class="search-input-edge"></span>
+  </span>
+    <ul class="search-result"></ul>
+  </div>
+</header>
+
+<nav class="navigation" data-ice="nav"><div>
+  <ul>
+    
+  <li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/orderbook.js~OrderBook.html">OrderBook</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/orderbook_sync.js~OrderBookSync.html">OrderBookSync</a></span></span></li>
+<li data-ice="doc"><div data-ice="dirPath" class="nav-dir-path">clients</div><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/authenticated.js~AuthenticatedClient.html">AuthenticatedClient</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/public.js~PublicClient.html">PublicClient</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/websocket.js~WebSocketClient.html">WebSocketClient</a></span></span></li>
+</ul>
+</div>
+</nav>
+
+<div class="content" data-ice="content"><h1 data-ice="title">lib/clients/authenticated.js</h1>
+<pre class="source-code line-number raw-source-code"><code class="prettyprint linenums" data-ice="content">/**
+ &gt; THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ &gt; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ &gt; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ &gt; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ &gt; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ &gt; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ &gt; SOFTWARE.
+ */
+
+/* eslint camelcase: [&quot;error&quot;, {properties: &quot;never&quot;}] */
+
+&apos;use strict&apos;;
+
+const isNode = require(&apos;detect-node&apos;);
+const queryString = require(&apos;querystring&apos;);
+const async = require(&apos;async&apos;);
+/**
+ * @ignore
+ * @type {PublicClient}
+ */
+const PublicClient = require(&apos;./public.js&apos;);
+
+const _ = {
+  &apos;forEach&apos;: require(&apos;lodash.foreach&apos;),
+};
+
+let request = isNode ? require(&apos;request&apos;) : require(&apos;browser-request&apos;);
+let crypto = isNode ? require(&apos;crypto&apos;) : require(&apos;crypto-browserify&apos;);
+
+/**
+ * Authenticated Client
+ */
+class AuthenticatedClient extends PublicClient {
+  /**
+   * Create new Authenticated Client
+   * @param {string} key super secret key
+   * @param {string} b64secret super secret
+   * @param {string} passphrase super secret password
+   * @param {string} apiURI URi of the webservice
+   */
+  constructor(key, b64secret, passphrase, apiURI) {
+    super(&apos;&apos;, apiURI);
+    this.key = key;
+    this.b64secret = b64secret;
+    this.passphrase = passphrase;
+  }
+
+  /**
+   * Get request
+   * @param {...object} args The arguments to send
+   */
+  get(...args) {
+    this.request(&apos;get&apos;, ...args);
+  }
+
+  /**
+   * Post request
+   * @param {...object} args The arguments to send
+   */
+  post(...args) {
+    this.request(&apos;post&apos;, ...args);
+  }
+
+  /**
+   * Put request
+   * @param {...object} args The arguments to send
+   */
+  put(...args) {
+    this.request(&apos;put&apos;, ...args);
+  }
+
+  /**
+   * Delete request
+   * @param {...object} args The arguments to send
+   */
+  delete(...args) {
+    this.request(&apos;delete&apos;, ...args);
+  }
+
+  /**
+   * Request
+   * @param {string} method Which type of request
+   * @param {array|string} uriParts A route or collection of routes
+   * @param {object|function} opts The options for this request
+   * @param {function|null} callback Callback function
+   */
+  request(method, uriParts, opts, callback) {
+    opts = opts || {};
+    if (!callback &amp;&amp; (typeof opts === &apos;function&apos;)) {
+      callback = opts;
+      opts = {};
+    }
+
+    if (!callback) {
+      throw new Error(&apos;Must supply a callback&apos;);
+    }
+    let relativeURI = this.makeRelativeURI(uriParts);
+    method = method.toUpperCase();
+
+    Object.assign(opts, {
+      &apos;method&apos;: method,
+      &apos;uri&apos;: this.makeAbsoluteURI(relativeURI),
+    });
+
+    this.addHeaders(opts, this._getSignature(method, relativeURI, opts));
+    request(opts, this.makeRequestCallback(callback));
+  }
+
+  /**
+   * _getSignature
+   * @param {string} method Type of request
+   * @param {string} relativeURI URI for resource
+   * @param {object} opts Options
+   * @return {object} The Signature
+   * @private
+   */
+  _getSignature(method, relativeURI, opts) {
+    let body = &apos;&apos;;
+
+    if (opts.body) {
+      body = JSON.stringify(opts.body);
+      opts.body = body;
+    } else if (opts.qs &amp;&amp; Object.keys(opts.qs).length !== 0) {
+      body = &apos;?&apos; + queryString.stringify(opts.qs);
+    }
+    let timestamp = Date.now() / 1000;
+    let what = timestamp + method + relativeURI + body;
+    let key = new Buffer(this.b64secret, &apos;base64&apos;);
+    let hmac = crypto.createHmac(&apos;sha256&apos;, key);
+    let signature = hmac.update(what).digest(&apos;base64&apos;);
+    return {
+      &apos;CB-ACCESS-KEY&apos;: this.key,
+      &apos;CB-ACCESS-SIGN&apos;: signature,
+      &apos;CB-ACCESS-TIMESTAMP&apos;: timestamp,
+      &apos;CB-ACCESS-PASSPHRASE&apos;: this.passphrase,
+    };
+  }
+
+  /**
+   * getAccounts
+   * @param {function} callback The callback function
+   * @return {Object} The Response
+   */
+  getAccounts(callback) {
+    return this.get(&apos;accounts&apos;, callback);
+  };
+
+  /**
+   * getAccount
+   * @param {string} accountID The Account
+   * @param {function} callback The callback function
+   * @return {object} The Response
+   */
+  getAccount(accountID, callback) {
+    return this.get([&apos;accounts&apos;, accountID], callback);
+  }
+
+  /**
+   * getAccountHistory
+   * @param {string} accountID The Account
+   * @param {object|function} args The args or callback
+   * @param {function} callback The callback function
+   * @return {object} The Response
+   */
+  getAccountHistory(accountID, args, callback) {
+    args = args || {};
+    if (!callback &amp;&amp; (typeof args === &apos;function&apos;)) {
+      callback = args;
+      args = {};
+    }
+
+    let opts = {&apos;qs&apos;: args};
+    return this.get([&apos;accounts&apos;, accountID, &apos;ledger&apos;], opts, callback);
+  }
+
+  /**
+   * getAccountHolds
+   * @param {string} accountID The Account
+   * @param {object|function} args The args or callback
+   * @param {function} callback The callback function
+   * @return {object} The Response
+   */
+  getAccountHolds(accountID, args, callback) {
+    args = args || {};
+    if (!callback &amp;&amp; (typeof args === &apos;function&apos;)) {
+      callback = args;
+      args = {};
+    }
+
+    let opts = {&apos;qs&apos;: args};
+    return this.get([&apos;accounts&apos;, accountID, &apos;holds&apos;], opts, callback);
+  }
+
+  /**
+   * placeOrder
+   * @param {object} params The options for this order
+   * @param {function} callback The callback function
+   * @return {object} The Response
+   * @private
+   */
+  _placeOrder(params, callback) {
+    let requiredParams = [&apos;size&apos;, &apos;side&apos;, &apos;product_id&apos;];
+
+    if (params.type !== &apos;market&apos;) {
+      requiredParams.push(&apos;price&apos;);
+    }
+
+    _.forEach(requiredParams, (param) =&gt; {
+      if (params[param] === undefined) {
+        throw new Error(`&quot;opts&quot; must include param &quot;${param}&quot;`);
+      }
+    });
+    let opts = {&apos;body&apos;: params};
+    return this.post(&apos;orders&apos;, opts, callback);
+  }
+
+  /**
+   * buy
+   * @param {object} params The buy parameters
+   * @param {function} callback The callback function
+   * @return {object} Response from order
+   */
+  buy(params, callback) {
+    params.side = &apos;buy&apos;;
+    return this._placeOrder(params, callback);
+  }
+
+  /**
+   * sell
+   * @param {object} params The sell parameters
+   * @param {function} callback The callback function
+   * @return {object} Response from order
+   */
+  sell(params, callback) {
+    params.side = &apos;sell&apos;;
+    return this._placeOrder(params, callback);
+  }
+
+  /**
+   * cancelOrder
+   * @param {string|function} orderID The order or callback
+   * @param {function|null} callback The callback function
+   * @return {object} Response from delete
+   */
+  cancelOrder(orderID, callback) {
+    if (!callback &amp;&amp; (typeof orderID === &apos;function&apos;)) {
+      callback = orderID;
+      callback(new Error(&apos;must provide an orderID or consider cancelOrders&apos;));
+      return;
+    }
+
+    return this.delete([&apos;orders&apos;, orderID], callback);
+  }
+
+  /**
+   * cancelOrders
+   * @param {function} callback The callback function
+   * @return {object} Response from delete
+   */
+  cancelOrders(callback) {
+    return this.delete(&apos;orders&apos;, callback);
+  }
+
+  /**
+   * getProductOrderBook
+   * temp over ride public call to get Product OrderBook
+   * @param {object|function} args The args or callback
+   * @param {string} productId The Product to get
+   * @param {function|null} callback The callback function
+   * @return {OrderBook} The Products order Book
+   */
+  getProductOrderBook(args, productId, callback) {
+    args = args || {};
+    if (!callback &amp;&amp; (typeof args === &apos;function&apos;)) {
+      callback = args;
+      args = {};
+    }
+
+    let opts = {&apos;qs&apos;: args};
+    return this.get([&apos;products&apos;, productId, &apos;book&apos;], opts, callback);
+  }
+
+  /**
+   * cancelAllOrders
+   * @param {object|function} args The args or callback
+   * @param {function} callback The callback function
+   */
+  cancelAllOrders(args, callback) {
+    let currentDeletedOrders = [];
+    let totalDeletedOrders = [];
+    let query = true;
+    let response;
+
+    args = args || {};
+    if (!callback &amp;&amp; (typeof args === &apos;function&apos;)) {
+      callback = args;
+      args = {};
+    }
+
+    let opts = {&apos;qs&apos;: args};
+
+    /**
+     * deleteOrders
+     * @param {function} done The callback function
+     */
+    const deleteOrders = (done) =&gt; {
+      this.delete(&apos;orders&apos;, opts, (err, resp, data) =&gt; {
+        if (err) {
+          done(err);
+          return;
+        }
+
+        if ((resp &amp;&amp; resp.statusCode != 200) || !data) {
+          let err = new Error(&apos;Failed to cancel all orders&apos;);
+          query = false;
+          done(err);
+          return;
+        }
+
+        currentDeletedOrders = data;
+        totalDeletedOrders = totalDeletedOrders.concat(currentDeletedOrders);
+        response = resp;
+
+        done();
+      });
+    };
+
+    async.doWhilst(
+      deleteOrders,
+      untilEmpty,
+      completed
+    );
+
+    /**
+     * untilEmpty
+     * @return {boolean} Filter check for empty
+     */
+    function untilEmpty() {
+      return (currentDeletedOrders.length &gt; 0 &amp;&amp; query);
+    }
+
+    /**
+     * Completed
+     * @param {error} err The Error
+     */
+    function completed(err) {
+      callback(err, response, totalDeletedOrders);
+    }
+  }
+
+  /**
+   * getOrders
+   * @param {object|function} args The args or Callback
+   * @param {function|null} callback The callback function
+   * @return {object} The Orders
+   */
+  getOrders(args, callback) {
+    args = args || {};
+    if (!callback &amp;&amp; (typeof args === &apos;function&apos;)) {
+      callback = args;
+      args = {};
+    }
+
+    let opts = {&apos;qs&apos;: args};
+    return this.get(&apos;orders&apos;, opts, callback);
+  }
+
+  /**
+   * getOrder by OrderId
+   * @param {string|function} orderID The OrderId or Callback
+   * @param {function|null} callback The Callback function
+   * @return {object} The Order
+   */
+  getOrder(orderID, callback) {
+    if (!callback &amp;&amp; (typeof orderID === &apos;function&apos;)) {
+      callback = orderID;
+      callback(new Error(&apos;must provide an orderID or consider getOrders&apos;));
+      return;
+    }
+
+    return this.get([&apos;orders&apos;, orderID], callback);
+  }
+
+  /**
+   * getFills
+   * @param {object|function} args Arguments or Callback
+   * @param {function|null} callback A callback Function
+   * @return {object} The fills
+   */
+  getFills(args, callback) {
+    args = args || {};
+    if (!callback &amp;&amp; (typeof args === &apos;function&apos;)) {
+      callback = args;
+      args = {};
+    }
+
+    let opts = {&apos;qs&apos;: args};
+    return this.get(&apos;fills&apos;, opts, callback);
+  }
+
+  /**
+   * deposit
+   * @param {object} params A list of parameters
+   * @param {function} callback The callback function
+   * @return {object} Response from post
+   */
+  deposit(params, callback) {
+    params.type = &apos;deposit&apos;;
+    return this._transferFunds(params, callback);
+  }
+
+  /**
+   * withdraw
+   * @param {object} params A list of Parameters
+   * @param {function} callback A callback function
+   * @return {object} Response from post
+   */
+  withdraw(params, callback) {
+    params.type = &apos;withdraw&apos;;
+    return this._transferFunds(params, callback);
+  }
+
+  /**
+   * transferFunds
+   * @param {object} params A list of parameters
+   * @param {function} callback A Callback Function
+   * @return {object} The request response
+   * @private
+   */
+  _transferFunds(params, callback) {
+    _.forEach([&apos;type&apos;, &apos;amount&apos;, &apos;coinbase_account_id&apos;], (param) =&gt; {
+      if (params[param] === undefined) {
+        throw new Error(`&quot;opts&quot; must include param &quot;${param}&quot;`);
+      }
+    });
+    let opts = {&apos;body&apos;: params};
+    return this.post(&apos;transfers&apos;, opts, callback);
+  }
+}
+
+module.exports = AuthenticatedClient;
+</code></pre>
+
+</div>
+
+<footer class="footer">
+  Generated by <a href="https://esdoc.org">ESDoc<span data-ice="esdocVersion">(0.4.8)</span></a>
+</footer>
+
+<script src="script/search_index.js"></script>
+<script src="script/search.js"></script>
+<script src="script/pretty-print.js"></script>
+<script src="script/inherited-summary.js"></script>
+<script src="script/test-summary.js"></script>
+<script src="script/inner-link.js"></script>
+<script src="script/patch-for-local.js"></script>
+</body>
+</html>

@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base data-ice="baseUrl" href="../../">
+  <title data-ice="title">tests/orderbook.js | API Document</title>
+  <link type="text/css" rel="stylesheet" href="css/style.css">
+  <link type="text/css" rel="stylesheet" href="css/prettify-tomorrow.css">
+  <script src="script/prettify/prettify.js"></script>
+  
+  
+  <script src="script/manual.js"></script>
+</head>
+<body class="layout-container" data-ice="rootContainer">
+
+<header>
+  <a href="./">Home</a>
+  
+  <a href="identifiers.html">Reference</a>
+  <a href="source.html">Source</a>
+  <a href="test.html" data-ice="testLink">Test</a>
+  
+  <div class="search-box">
+  <span>
+    <img src="./image/search.png">
+    <span class="search-input-edge"></span><input class="search-input"><span class="search-input-edge"></span>
+  </span>
+    <ul class="search-result"></ul>
+  </div>
+</header>
+
+<nav class="navigation" data-ice="nav"><div>
+  <ul>
+    
+  <li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/orderbook.js~OrderBook.html">OrderBook</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/orderbook_sync.js~OrderBookSync.html">OrderBookSync</a></span></span></li>
+<li data-ice="doc"><div data-ice="dirPath" class="nav-dir-path">clients</div><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/authenticated.js~AuthenticatedClient.html">AuthenticatedClient</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/public.js~PublicClient.html">PublicClient</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/websocket.js~WebSocketClient.html">WebSocketClient</a></span></span></li>
+</ul>
+</div>
+</nav>
+
+<div class="content" data-ice="content"><h1 data-ice="title">tests/orderbook.js</h1>
+<pre class="source-code line-number raw-source-code"><code class="prettyprint linenums" data-ice="content">/**
+ &gt; THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ &gt; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ &gt; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ &gt; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ &gt; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ &gt; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ &gt; SOFTWARE.
+ */
+
+/* eslint camelcase: [&quot;error&quot;, {properties: &quot;never&quot;}] */
+
+&apos;use strict&apos;;
+
+let assert = require(&apos;assert&apos;);
+
+let OrderBook = require(&apos;../lib/orderbook&apos;);
+
+let checkState = (state, exp) =&gt; {
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), exp);
+};
+/** @test {OrderBook} */
+describe(&apos;OrderBook&apos;, () =&gt; {
+  /** @test {OrderBook#add} */
+  test(&apos;add new orders&apos;, () =&gt; {
+    let state = {
+      bids: [
+        {
+          id: &apos;super-duper-id-2&apos;,
+          side: &apos;buy&apos;,
+          price: 201,
+          size: 10,
+        },
+        {
+          id: &apos;super-duper-id&apos;,
+          side: &apos;buy&apos;,
+          price: 200,
+          size: 10,
+        },
+      ],
+      asks: [],
+    };
+
+    let orderbook = new OrderBook();
+    orderbook.add(state.bids[0]);
+    orderbook.add(state.bids[1]);
+
+    checkState(orderbook.state(), state);
+  });
+
+  /** @test {OrderBook#remove} */
+  test(&apos;remove order&apos;, () =&gt; {
+    let apiState = {
+      bids: [
+        [201, 10, &apos;super-duper-id-2&apos;],
+        [201, 10, &apos;super-duper-id-3&apos;],
+        [200, 10, &apos;super-duper-id&apos;],
+      ],
+      asks: [],
+    };
+
+    let state = {
+      bids: [
+        {
+          id: &apos;super-duper-id-2&apos;,
+          side: &apos;buy&apos;,
+          price: 201,
+          size: 10,
+        },
+        {
+          id: &apos;super-duper-id-3&apos;,
+          side: &apos;buy&apos;,
+          price: 201,
+          size: 10,
+        },
+        {
+          id: &apos;super-duper-id&apos;,
+          side: &apos;buy&apos;,
+          price: 200,
+          size: 10,
+        },
+      ],
+      asks: [],
+    };
+
+    let orderbook = new OrderBook();
+    orderbook.state(apiState);
+    checkState(orderbook.state(), state);
+
+    orderbook.remove(&apos;super-duper-id-3&apos;);
+    state.bids.splice(1, 1);
+    checkState(orderbook.state(), state);
+  });
+
+  /** @test {OrderBook#get} */
+  test(&apos;get order&apos;, () =&gt; {
+    let apiState = {
+      bids: [
+        [201, 10, &apos;super-duper-id-2&apos;],
+        [200, 10, &apos;super-duper-id&apos;],
+      ],
+      asks: [],
+    };
+
+    let expected = {
+      id: &apos;super-duper-id-2&apos;,
+      price: 201,
+      size: 10,
+      side: &apos;buy&apos;,
+    };
+
+    let orderbook = new OrderBook();
+    orderbook.state(apiState);
+    let order = orderbook.get(&apos;super-duper-id-2&apos;);
+
+    assert.deepEqual(JSON.parse(JSON.stringify(order)), expected);
+  });
+
+  /** @test {OrderBook#match} */
+  test(&apos;partial order match&apos;, () =&gt; {
+    let apiState = {
+      bids: [
+        [201, 10, &apos;super-duper-id-2&apos;],
+        [200, 10, &apos;super-duper-id&apos;],
+      ],
+      asks: [],
+    };
+
+    // noinspection Eslint
+    let match = {
+      maker_order_id: &apos;super-duper-id-2&apos;,
+      size: 5,
+      price: 201,
+      side: &apos;buy&apos;,
+    };
+
+    let expectedState = {
+      bids: [
+        {
+          id: &apos;super-duper-id-2&apos;,
+          side: &apos;buy&apos;,
+          price: 201,
+          size: 5,
+        },
+        {
+          id: &apos;super-duper-id&apos;,
+          side: &apos;buy&apos;,
+          price: 200,
+          size: 10,
+        },
+      ],
+      asks: [],
+    };
+
+    let orderbook = new OrderBook();
+    orderbook.state(apiState);
+    orderbook.match(match);
+
+    checkState(orderbook.state(), expectedState);
+  });
+
+  /** @test {OrderBook#change} */
+  test(&apos;full order match&apos;, () =&gt; {
+    let apiState = {
+      bids: [
+        [201, 10, &apos;super-duper-id-2&apos;],
+        [200, 10, &apos;super-duper-id&apos;],
+      ],
+      asks: [],
+    };
+
+    // noinspection Eslint
+    let match = {
+      maker_order_id: &apos;super-duper-id-2&apos;,
+      size: 10,
+      price: 201,
+      side: &apos;buy&apos;,
+    };
+
+    let expectedState = {
+      bids: [
+        {
+          id: &apos;super-duper-id&apos;,
+          side: &apos;buy&apos;,
+          price: 200,
+          size: 10,
+        },
+      ],
+      asks: [],
+    };
+
+    let orderbook = new OrderBook();
+    orderbook.state(apiState);
+    orderbook.match(match);
+
+    checkState(orderbook.state(), expectedState);
+  });
+
+  /** @test {OrderBook#add} */
+  test(&apos;order change&apos;, () =&gt; {
+    let apiState = {
+      bids: [
+        [201, 10, &apos;super-duper-id-2&apos;],
+        [200, 10, &apos;super-duper-id&apos;],
+      ],
+      asks: [],
+    };
+
+    // noinspection Eslint
+    let change = {
+      order_id: &apos;super-duper-id-2&apos;,
+      old_size: &apos;10.0&apos;,
+      new_size: 3,
+      price: 201,
+      side: &apos;buy&apos;,
+    };
+
+    let expectedState = {
+      bids: [
+        {
+          id: &apos;super-duper-id-2&apos;,
+          side: &apos;buy&apos;,
+          price: 201,
+          size: 3,
+        },
+        {
+          id: &apos;super-duper-id&apos;,
+          side: &apos;buy&apos;,
+          price: 200,
+          size: 10,
+        },
+      ],
+      asks: [],
+    };
+
+    let orderbook = new OrderBook();
+    orderbook.state(apiState);
+    orderbook.change(change);
+
+    checkState(orderbook.state(), expectedState);
+  });
+});
+</code></pre>
+
+</div>
+
+<footer class="footer">
+  Generated by <a href="https://esdoc.org">ESDoc<span data-ice="esdocVersion">(0.4.8)</span></a>
+</footer>
+
+<script src="script/search_index.js"></script>
+<script src="script/search.js"></script>
+<script src="script/pretty-print.js"></script>
+<script src="script/inherited-summary.js"></script>
+<script src="script/test-summary.js"></script>
+<script src="script/inner-link.js"></script>
+<script src="script/patch-for-local.js"></script>
+</body>
+</html>

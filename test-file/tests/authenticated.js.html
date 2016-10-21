@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base data-ice="baseUrl" href="../../">
+  <title data-ice="title">tests/authenticated.js | API Document</title>
+  <link type="text/css" rel="stylesheet" href="css/style.css">
+  <link type="text/css" rel="stylesheet" href="css/prettify-tomorrow.css">
+  <script src="script/prettify/prettify.js"></script>
+  
+  
+  <script src="script/manual.js"></script>
+</head>
+<body class="layout-container" data-ice="rootContainer">
+
+<header>
+  <a href="./">Home</a>
+  
+  <a href="identifiers.html">Reference</a>
+  <a href="source.html">Source</a>
+  <a href="test.html" data-ice="testLink">Test</a>
+  
+  <div class="search-box">
+  <span>
+    <img src="./image/search.png">
+    <span class="search-input-edge"></span><input class="search-input"><span class="search-input-edge"></span>
+  </span>
+    <ul class="search-result"></ul>
+  </div>
+</header>
+
+<nav class="navigation" data-ice="nav"><div>
+  <ul>
+    
+  <li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/orderbook.js~OrderBook.html">OrderBook</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/orderbook_sync.js~OrderBookSync.html">OrderBookSync</a></span></span></li>
+<li data-ice="doc"><div data-ice="dirPath" class="nav-dir-path">clients</div><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/authenticated.js~AuthenticatedClient.html">AuthenticatedClient</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/public.js~PublicClient.html">PublicClient</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/websocket.js~WebSocketClient.html">WebSocketClient</a></span></span></li>
+</ul>
+</div>
+</nav>
+
+<div class="content" data-ice="content"><h1 data-ice="title">tests/authenticated.js</h1>
+<pre class="source-code line-number raw-source-code"><code class="prettyprint linenums" data-ice="content">/**
+ &gt; THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ &gt; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ &gt; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ &gt; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ &gt; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ &gt; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ &gt; SOFTWARE.
+ */
+
+/* eslint camelcase: [&quot;error&quot;, {properties: &quot;never&quot;}] */
+
+&apos;use strict&apos;;
+
+let assert = require(&apos;assert&apos;);
+let nock = require(&apos;nock&apos;);
+
+let AuthenticatedClient = require(&apos;../lib/clients/authenticated&apos;);
+
+let key = &apos;key&apos;;
+let secret = &apos;secret&apos;;
+let passphrase = &apos;passphrase&apos;;
+
+let EXCHANGE_API_URL = &apos;https://api.gdax.com&apos;;
+
+let authClient = new AuthenticatedClient(key, secret, passphrase);
+/** @test {AuthenticatedClient} */
+describe(&apos;AuthenticatedClient&apos;, () =&gt; {
+  /** @test {AuthenticatedClient#_getSignature} */
+  test(&apos;._getSignature&apos;, () =&gt; {
+    let method = &apos;PUT&apos;;
+    let relativeURI = &apos;/orders&apos;;
+    let opts = {
+      method: &apos;PUT&apos;,
+      uri: &apos;https://api.gdax.com/orders&apos;,
+    };
+
+    let sig = authClient._getSignature(method, relativeURI, opts);
+
+    assert.equal(sig[&apos;CB-ACCESS-KEY&apos;], key);
+    assert.equal(sig[&apos;CB-ACCESS-PASSPHRASE&apos;], passphrase);
+
+    assert(sig[&apos;CB-ACCESS-TIMESTAMP&apos;]);
+    assert(sig[&apos;CB-ACCESS-SIGN&apos;]);
+  });
+
+  /** @test {AuthenticatedClient#getAccount} */
+  test(&apos;get account&apos;, (done) =&gt; {
+    let expectedResponse = {
+      &apos;id&apos;: &apos;a1b2c3d4&apos;,
+      &apos;balance&apos;: &apos;1.100&apos;,
+      &apos;holds&apos;: &apos;0.100&apos;,
+      &apos;available&apos;: &apos;1.00&apos;,
+      &apos;currency&apos;: &apos;USD&apos;,
+    };
+
+    nock(EXCHANGE_API_URL)
+      .get(&apos;/accounts/test-id&apos;)
+      .reply(200, expectedResponse);
+
+    authClient.getAccount(&apos;test-id&apos;, (err, resp, data) =&gt; {
+      assert.ifError(err);
+      assert.deepEqual(data, expectedResponse);
+
+      nock.cleanAll();
+      done();
+    });
+  });
+
+  /** @test {AuthenticatedClient#getAccounts} */
+  test(&apos;get accounts&apos;, (done) =&gt; {
+    let expectedResponse = [{
+      &apos;id&apos;: &apos;a1b2c3d4&apos;,
+      &apos;balance&apos;: &apos;1.100&apos;,
+      &apos;holds&apos;: &apos;0.100&apos;,
+      &apos;available&apos;: &apos;1.00&apos;,
+      &apos;currency&apos;: &apos;USD&apos;,
+    }];
+
+    nock(EXCHANGE_API_URL)
+      .get(&apos;/accounts&apos;)
+      .reply(200, expectedResponse);
+
+    authClient.getAccounts((err, resp, data) =&gt; {
+      assert.ifError(err);
+      assert.deepEqual(data, expectedResponse);
+
+      nock.cleanAll();
+      done();
+    });
+  });
+
+  /** @test {AuthenticatedClient#getAccountHistory} */
+  test(&apos;get account history&apos;, (done) =&gt; {
+    let expectedResponse = [{
+      &apos;id&apos;: &apos;100&apos;,
+      &apos;created_at&apos;: &apos;2014-11-07T08:19:27.028459Z&apos;,
+      &apos;amount&apos;: &apos;0.001&apos;,
+      &apos;balance&apos;: &apos;239.669&apos;,
+      &apos;type&apos;: &apos;fee&apos;,
+      &apos;details&apos;: {
+        &apos;order_id&apos;: &apos;d50ec984-77a8-460a-b958-66f114b0de9b&apos;,
+        &apos;trade_id&apos;: &apos;74&apos;,
+        &apos;product_id&apos;: &apos;BTC-USD&apos;,
+      },
+    }];
+
+    nock(EXCHANGE_API_URL)
+      .get(&apos;/accounts/test-id/ledger&apos;)
+      .reply(200, expectedResponse);
+
+    authClient.getAccountHistory(&apos;test-id&apos;, (err, resp, data) =&gt; {
+      assert.ifError(err);
+      assert.deepEqual(data, expectedResponse);
+
+      nock.cleanAll();
+      done();
+    });
+  });
+
+  /** @test {AuthenticatedClient#getAccountHolds} */
+  test(&apos;get account holds&apos;, (done) =&gt; {
+    let expectedResponse = [{
+      &apos;id&apos;: &apos;82dcd140-c3c7-4507-8de4-2c529cd1a28f&apos;,
+      &apos;account_id&apos;: &apos;e0b3f39a-183d-453e-b754-0c13e5bab0b3&apos;,
+      &apos;created_at&apos;: &apos;2014-11-06T10:34:47.123456Z&apos;,
+      &apos;updated_at&apos;: &apos;2014-11-06T10:40:47.123456Z&apos;,
+      &apos;amount&apos;: &apos;4.23&apos;,
+      &apos;type&apos;: &apos;order&apos;,
+      &apos;ref&apos;: &apos;0a205de4-dd35-4370-a285-fe8fc375a273&apos;,
+    }];
+
+    nock(EXCHANGE_API_URL)
+      .get(&apos;/accounts/test-id/holds&apos;)
+      .reply(200, expectedResponse);
+
+    authClient.getAccountHolds(&apos;test-id&apos;, (err, resp, data) =&gt; {
+      assert.ifError(err);
+      assert.deepEqual(data, expectedResponse);
+
+      nock.cleanAll();
+      done();
+    });
+  });
+
+  /** @test {AuthenticatedClient#buy} */
+  test(&apos;buy order&apos;, (done) =&gt; {
+    // noinspection Eslint
+    let order = {
+      size: &apos;10&apos;,
+      product_id: &apos;BTC-USD&apos;,
+      price: &apos;100&apos;,
+    };
+
+    let expectedOrder = order;
+    expectedOrder.side = &apos;buy&apos;;
+
+    let expectedResponse = {
+      &apos;id&apos;: &apos;0428b97b-bec1-429e-a94c-59992926778d&apos;,
+    };
+
+    nock(EXCHANGE_API_URL)
+      .post(&apos;/orders&apos;, expectedOrder)
+      .reply(200, expectedResponse);
+
+    authClient.buy(order, (err, resp, data) =&gt; {
+      assert.ifError(err);
+      assert.deepEqual(data, expectedResponse);
+
+      nock.cleanAll();
+      done();
+    });
+  });
+
+  /** @test {AuthenticatedClient#sell} */
+  test(&apos;sell order&apos;, (done) =&gt; {
+    // noinspection Eslint
+    let order = {
+      size: &apos;10&apos;,
+      product_id: &apos;BTC-USD&apos;,
+      price: &apos;100&apos;,
+    };
+
+    let expectedOrder = order;
+    expectedOrder.side = &apos;sell&apos;;
+
+    let expectedResponse = {
+      &apos;id&apos;: &apos;0428b97b-bec1-429e-a94c-59992926778d&apos;,
+    };
+
+    nock(EXCHANGE_API_URL)
+      .post(&apos;/orders&apos;, expectedOrder)
+      .reply(200, expectedResponse);
+
+    authClient.sell(order, (err, resp, data) =&gt; {
+      assert.ifError(err);
+      assert.deepEqual(data, expectedResponse);
+
+      nock.cleanAll();
+      done();
+    });
+  });
+
+  /** @test {AuthenticatedClient#getProductOrderBook} */
+  test(&apos;get product orderbook&apos;, (done) =&gt; {
+    nock(EXCHANGE_API_URL)
+      .get(&apos;/products/BTC-USD/book?level=3&apos;)
+      .reply(200, {
+        asks: [],
+        bids: [],
+      });
+
+    authClient.getProductOrderBook({level: 3}, &apos;BTC-USD&apos;,
+      (err, resp, data) =&gt; {
+        assert(data);
+        done();
+      });
+  });
+
+  /** @test {AuthenticatedClient#cancelAllOrders} */
+  test(&apos;cancel all orders&apos;, (done) =&gt; {
+    // nock three requests to delete /orders
+
+    let cancelledOrdersOne = [
+      &apos;deleted-id-1&apos;,
+      &apos;deleted-id-2&apos;,
+      &apos;deleted-id-3&apos;,
+      &apos;deleted-id-4&apos;,
+    ];
+
+    let cancelledOrdersTwo = [
+      &apos;deleted-id-5&apos;,
+      &apos;deleted-id-6&apos;,
+      &apos;deleted-id-7&apos;,
+      &apos;deleted-id-8&apos;,
+    ];
+
+    let totalExpectedDeleted = cancelledOrdersOne.concat(cancelledOrdersTwo);
+
+    // first list of Id&apos;s that just got cancelled
+    nock(EXCHANGE_API_URL)
+      .delete(&apos;/orders&apos;)
+      .reply(200, cancelledOrdersOne);
+
+    // second list of Id&apos;s that just got cancelled
+    nock(EXCHANGE_API_URL)
+      .delete(&apos;/orders&apos;)
+      .reply(200, cancelledOrdersTwo);
+
+    // return empty array signalling the completion of all
+    // orders having been cancelled
+    nock(EXCHANGE_API_URL)
+      .delete(&apos;/orders&apos;)
+      .reply(200, []);
+
+    authClient.cancelAllOrders((err, resp, totalDeletedOrders) =&gt; {
+      assert.ifError(err);
+      assert.deepEqual(totalDeletedOrders, totalExpectedDeleted);
+
+      nock.cleanAll();
+      done();
+    });
+  });
+
+  /** @test {AuthenticatedClient#cancelOrder} */
+  test(&apos;should require orderID for cancelOrder&apos;, (done) =&gt; {
+    authClient.cancelOrder((err, resp, data) =&gt; {
+      assert(err);
+      done();
+    });
+  });
+
+  /** @test {AuthenticatedClient#getOrders} */
+  test(&apos;get orders&apos;, (done) =&gt; {
+    let expectedResponse = [{
+      &apos;id&apos;: &apos;d50ec984-77a8-460a-b958-66f114b0de9b&apos;,
+      &apos;size&apos;: &apos;3.0&apos;,
+      &apos;price&apos;: &apos;100.23&apos;,
+      &apos;product_id&apos;: &apos;BTC-USD&apos;,
+      &apos;status&apos;: &apos;open&apos;,
+      &apos;filled_size&apos;: &apos;1.23&apos;,
+      &apos;fill_fees&apos;: &apos;0.001&apos;,
+      &apos;settled&apos;: false,
+      &apos;side&apos;: &apos;buy&apos;,
+      &apos;created_at&apos;: &apos;2014-11-14T06:39:55.189376Z&apos;,
+    }];
+
+    nock(EXCHANGE_API_URL)
+      .get(&apos;/orders&apos;)
+      .reply(200, expectedResponse);
+
+    authClient.getOrders((err, resp, data) =&gt; {
+      assert.ifError(err);
+      assert.deepEqual(data, expectedResponse);
+
+      nock.cleanAll();
+      done();
+    });
+  });
+
+  /** @test {AuthenticatedClient#getOrder} */
+  test(&apos;should require orderID for getOrder&apos;, (done) =&gt; {
+    authClient.getOrder((err, resp, data) =&gt; {
+      assert(err);
+      done();
+    });
+  });
+
+  /** @test {AuthenticatedClient#getFills} */
+  test(&apos;get fills&apos;, (done) =&gt; {
+    let expectedResponse = [{
+      &apos;trade_id&apos;: 74,
+      &apos;product_id&apos;: &apos;BTC-USD&apos;,
+      &apos;price&apos;: &apos;10.00&apos;,
+      &apos;size&apos;: &apos;0.01&apos;,
+      &apos;order_id&apos;: &apos;d50ec984-77a8-460a-b958-66f114b0de9b&apos;,
+      &apos;created_at&apos;: &apos;2014-11-07T22:19:28.578544Z&apos;,
+      &apos;liquidity&apos;: &apos;T&apos;,
+      &apos;fee&apos;: &apos;0.00025&apos;,
+      &apos;settled&apos;: true,
+      &apos;side&apos;: &apos;buy&apos;,
+    }];
+
+    nock(EXCHANGE_API_URL)
+      .get(&apos;/fills&apos;)
+      .reply(200, expectedResponse);
+
+
+    authClient.getFills((err, resp, data) =&gt; {
+      assert.ifError(err);
+      assert.deepEqual(data, expectedResponse);
+
+      nock.cleanAll();
+      done();
+    });
+  });
+
+  /** @test {AuthenticatedClient#deposit} */
+  test(&apos;deposit&apos;, (done) =&gt; {
+    let transfer = {
+      &apos;amount&apos;: 10480,
+      &apos;coinbase_account_id&apos;: &apos;test-id&apos;,
+    };
+
+    let expectedTransfer = transfer;
+    expectedTransfer.type = &apos;deposit&apos;;
+
+    nock(EXCHANGE_API_URL)
+      .post(&apos;/transfers&apos;, expectedTransfer)
+      .reply(200, {});
+
+    authClient.deposit(transfer, (err, resp, data) =&gt; {
+      assert.ifError(err);
+
+      nock.cleanAll();
+      done();
+    });
+  });
+
+  /** @test {AuthenticatedClient#withdraw} */
+  test(&apos;withdraw&apos;, (done) =&gt; {
+    let transfer = {
+      &apos;amount&apos;: 10480,
+      &apos;coinbase_account_id&apos;: &apos;test-id&apos;,
+    };
+
+    let expectedTransfer = transfer;
+    expectedTransfer.type = &apos;withdraw&apos;;
+
+    nock(EXCHANGE_API_URL)
+      .post(&apos;/transfers&apos;, expectedTransfer)
+      .reply(200, {});
+
+    authClient.withdraw(transfer, (err, resp, data) =&gt; {
+      assert.ifError(err);
+
+      nock.cleanAll();
+      done();
+    });
+  });
+
+  /** @test {AuthenticatedClient#cancelAllOrders} */
+  test(&apos;cancel all should be able to handle errors&apos;, (done) =&gt; {
+    nock(EXCHANGE_API_URL)
+      .delete(&apos;/orders&apos;)
+      .reply(404, null);
+
+    authClient.cancelAllOrders((err, resp, totalExpectedDeleted) =&gt; {
+      assert(err);
+
+      nock.cleanAll();
+      done();
+    });
+  });
+});
+</code></pre>
+
+</div>
+
+<footer class="footer">
+  Generated by <a href="https://esdoc.org">ESDoc<span data-ice="esdocVersion">(0.4.8)</span></a>
+</footer>
+
+<script src="script/search_index.js"></script>
+<script src="script/search.js"></script>
+<script src="script/pretty-print.js"></script>
+<script src="script/inherited-summary.js"></script>
+<script src="script/test-summary.js"></script>
+<script src="script/inner-link.js"></script>
+<script src="script/patch-for-local.js"></script>
+</body>
+</html>

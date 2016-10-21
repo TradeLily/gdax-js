@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base data-ice="baseUrl" href="../../">
+  <title data-ice="title">lib/orderbook_sync.js | API Document</title>
+  <link type="text/css" rel="stylesheet" href="css/style.css">
+  <link type="text/css" rel="stylesheet" href="css/prettify-tomorrow.css">
+  <script src="script/prettify/prettify.js"></script>
+  
+  
+  <script src="script/manual.js"></script>
+</head>
+<body class="layout-container" data-ice="rootContainer">
+
+<header>
+  <a href="./">Home</a>
+  
+  <a href="identifiers.html">Reference</a>
+  <a href="source.html">Source</a>
+  <a href="test.html" data-ice="testLink">Test</a>
+  
+  <div class="search-box">
+  <span>
+    <img src="./image/search.png">
+    <span class="search-input-edge"></span><input class="search-input"><span class="search-input-edge"></span>
+  </span>
+    <ul class="search-result"></ul>
+  </div>
+</header>
+
+<nav class="navigation" data-ice="nav"><div>
+  <ul>
+    
+  <li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/orderbook.js~OrderBook.html">OrderBook</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/orderbook_sync.js~OrderBookSync.html">OrderBookSync</a></span></span></li>
+<li data-ice="doc"><div data-ice="dirPath" class="nav-dir-path">clients</div><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/authenticated.js~AuthenticatedClient.html">AuthenticatedClient</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/public.js~PublicClient.html">PublicClient</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/lib/clients/websocket.js~WebSocketClient.html">WebSocketClient</a></span></span></li>
+</ul>
+</div>
+</nav>
+
+<div class="content" data-ice="content"><h1 data-ice="title">lib/orderbook_sync.js</h1>
+<pre class="source-code line-number raw-source-code"><code class="prettyprint linenums" data-ice="content">/**
+ &gt; THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ &gt; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ &gt; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ &gt; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ &gt; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ &gt; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ &gt; SOFTWARE.
+ */
+
+&apos;use strict&apos;;
+
+const WebSocketClient = require(&apos;./clients/websocket.js&apos;);
+const PublicClient = require(&apos;./clients/public.js&apos;);
+const OrderBook = require(&apos;./orderbook.js&apos;);
+
+let _ = {
+  forEach: require(&apos;lodash.foreach&apos;),
+};
+
+/**
+ *
+ * @type {OrderBookSync}
+ */
+class OrderBookSync extends WebSocketClient {
+  /**
+   * OrderBookSync constructor
+   * @param {string} productID The product
+   * @param {string} apiURI URI for api resource
+   * @param {string} websocketURI URI for socket resource
+   * @param {AuthenticatedClient} authenticatedClient A authorized client
+   */
+  constructor(productID, apiURI, websocketURI, authenticatedClient) {
+    super();
+    this.productID = productID || &apos;BTC-USD&apos;;
+    this.apiURI = apiURI || &apos;https://api.gdax.com&apos;;
+    this.websocketURI = websocketURI || &apos;wss://ws-feed.gdax.com&apos;;
+    this.authenticatedClient = authenticatedClient;
+
+    this._queue = [];
+    this._sequence = -1;
+    this.loadOrderBook();
+  }
+
+  /**
+   * onMessage
+   * @param {object} data The Response
+   */
+  onMessage(data) {
+    data = JSON.parse(data.data);
+
+    if (this._sequence === -1) {
+      // OrderBook snapshot not loaded yet
+      this._queue.push(data);
+    } else {
+      this.processMessage(data);
+    }
+  };
+
+  /**
+   * loadOrderBook
+   */
+  loadOrderBook() {
+    let bookLevel = 3;
+    let args = {&apos;level&apos;: bookLevel};
+
+    this.book = new OrderBook();
+
+    const cb = (err, response, body) =&gt; {
+      if (err) throw new Error(`Failed to load orderbook: ${err}`);
+
+      if (response.statusCode !== 200)
+        throw new Error(`Failed to load orderbook: ${response.statusCode}`);
+
+      let data = JSON.parse(response.body);
+      this.book.state(data);
+      this._sequence = data.sequence;
+      _.forEach(this._queue, (data) =&gt; this.processMessage(data));
+      this._queue = [];
+    };
+
+    if (this.authenticatedClient) {
+      this.authenticatedClient.getProductOrderBook(args, this.productID, cb);
+    } else {
+      if (!this.publicClient) {
+        this.publicClient = new PublicClient(this.productID, this.apiURI);
+      }
+      this.publicClient.getProductOrderBook(args, cb);
+    }
+  };
+
+  /**
+   * processMessage
+   * @param {object} data A Response
+   */
+  processMessage(data) {
+    if (this._sequence == -1) {
+      // Resync is in process
+      return;
+    }
+    if (data.sequence &lt;= this._sequence) {
+      // Skip this one, since it was already processed
+      return;
+    }
+
+    if (data.sequence != this._sequence + 1) {
+      // Dropped a message, start a resync process
+      this._queue = [];
+      this._sequence = -1;
+
+      this.loadOrderBook();
+      return;
+    }
+
+    this._sequence = data.sequence;
+
+    switch (data.type) {
+      case &apos;open&apos;:
+        this.book.add(data);
+        break;
+
+      case &apos;done&apos;:
+        this.book.remove(data.order_id);
+        break;
+
+      case &apos;match&apos;:
+        this.book.match(data);
+        break;
+
+      case &apos;change&apos;:
+        this.book.change(data);
+        break;
+    }
+  }
+}
+
+module.exports = OrderBookSync;
+</code></pre>
+
+</div>
+
+<footer class="footer">
+  Generated by <a href="https://esdoc.org">ESDoc<span data-ice="esdocVersion">(0.4.8)</span></a>
+</footer>
+
+<script src="script/search_index.js"></script>
+<script src="script/search.js"></script>
+<script src="script/pretty-print.js"></script>
+<script src="script/inherited-summary.js"></script>
+<script src="script/test-summary.js"></script>
+<script src="script/inner-link.js"></script>
+<script src="script/patch-for-local.js"></script>
+</body>
+</html>

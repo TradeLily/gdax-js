@@ -1,0 +1,4657 @@
+[
+  {
+    "__docId__": 0,
+    "kind": "file",
+    "static": true,
+    "variation": null,
+    "name": "lib/clients/authenticated.js",
+    "memberof": null,
+    "longname": "lib/clients/authenticated.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 13,
+    "content": "/**\n > THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n > IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n > FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n > AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n > SOFTWARE.\n */\n\n/* eslint camelcase: [\"error\", {properties: \"never\"}] */\n\n'use strict';\n\nconst isNode = require('detect-node');\nconst queryString = require('querystring');\nconst async = require('async');\n/**\n * @ignore\n * @type {PublicClient}\n */\nconst PublicClient = require('./public.js');\n\nconst _ = {\n  'forEach': require('lodash.foreach'),\n};\n\nlet request = isNode ? require('request') : require('browser-request');\nlet crypto = isNode ? require('crypto') : require('crypto-browserify');\n\n/**\n * Authenticated Client\n */\nclass AuthenticatedClient extends PublicClient {\n  /**\n   * Create new Authenticated Client\n   * @param {string} key super secret key\n   * @param {string} b64secret super secret\n   * @param {string} passphrase super secret password\n   * @param {string} apiURI URi of the webservice\n   */\n  constructor(key, b64secret, passphrase, apiURI) {\n    super('', apiURI);\n    this.key = key;\n    this.b64secret = b64secret;\n    this.passphrase = passphrase;\n  }\n\n  /**\n   * Get request\n   * @param {...object} args The arguments to send\n   */\n  get(...args) {\n    this.request('get', ...args);\n  }\n\n  /**\n   * Post request\n   * @param {...object} args The arguments to send\n   */\n  post(...args) {\n    this.request('post', ...args);\n  }\n\n  /**\n   * Put request\n   * @param {...object} args The arguments to send\n   */\n  put(...args) {\n    this.request('put', ...args);\n  }\n\n  /**\n   * Delete request\n   * @param {...object} args The arguments to send\n   */\n  delete(...args) {\n    this.request('delete', ...args);\n  }\n\n  /**\n   * Request\n   * @param {string} method Which type of request\n   * @param {array|string} uriParts A route or collection of routes\n   * @param {object|function} opts The options for this request\n   * @param {function|null} callback Callback function\n   */\n  request(method, uriParts, opts, callback) {\n    opts = opts || {};\n    if (!callback && (typeof opts === 'function')) {\n      callback = opts;\n      opts = {};\n    }\n\n    if (!callback) {\n      throw new Error('Must supply a callback');\n    }\n    let relativeURI = this.makeRelativeURI(uriParts);\n    method = method.toUpperCase();\n\n    Object.assign(opts, {\n      'method': method,\n      'uri': this.makeAbsoluteURI(relativeURI),\n    });\n\n    this.addHeaders(opts, this._getSignature(method, relativeURI, opts));\n    request(opts, this.makeRequestCallback(callback));\n  }\n\n  /**\n   * _getSignature\n   * @param {string} method Type of request\n   * @param {string} relativeURI URI for resource\n   * @param {object} opts Options\n   * @return {object} The Signature\n   * @private\n   */\n  _getSignature(method, relativeURI, opts) {\n    let body = '';\n\n    if (opts.body) {\n      body = JSON.stringify(opts.body);\n      opts.body = body;\n    } else if (opts.qs && Object.keys(opts.qs).length !== 0) {\n      body = '?' + queryString.stringify(opts.qs);\n    }\n    let timestamp = Date.now() / 1000;\n    let what = timestamp + method + relativeURI + body;\n    let key = new Buffer(this.b64secret, 'base64');\n    let hmac = crypto.createHmac('sha256', key);\n    let signature = hmac.update(what).digest('base64');\n    return {\n      'CB-ACCESS-KEY': this.key,\n      'CB-ACCESS-SIGN': signature,\n      'CB-ACCESS-TIMESTAMP': timestamp,\n      'CB-ACCESS-PASSPHRASE': this.passphrase,\n    };\n  }\n\n  /**\n   * getAccounts\n   * @param {function} callback The callback function\n   * @return {Object} The Response\n   */\n  getAccounts(callback) {\n    return this.get('accounts', callback);\n  };\n\n  /**\n   * getAccount\n   * @param {string} accountID The Account\n   * @param {function} callback The callback function\n   * @return {object} The Response\n   */\n  getAccount(accountID, callback) {\n    return this.get(['accounts', accountID], callback);\n  }\n\n  /**\n   * getAccountHistory\n   * @param {string} accountID The Account\n   * @param {object|function} args The args or callback\n   * @param {function} callback The callback function\n   * @return {object} The Response\n   */\n  getAccountHistory(accountID, args, callback) {\n    args = args || {};\n    if (!callback && (typeof args === 'function')) {\n      callback = args;\n      args = {};\n    }\n\n    let opts = {'qs': args};\n    return this.get(['accounts', accountID, 'ledger'], opts, callback);\n  }\n\n  /**\n   * getAccountHolds\n   * @param {string} accountID The Account\n   * @param {object|function} args The args or callback\n   * @param {function} callback The callback function\n   * @return {object} The Response\n   */\n  getAccountHolds(accountID, args, callback) {\n    args = args || {};\n    if (!callback && (typeof args === 'function')) {\n      callback = args;\n      args = {};\n    }\n\n    let opts = {'qs': args};\n    return this.get(['accounts', accountID, 'holds'], opts, callback);\n  }\n\n  /**\n   * placeOrder\n   * @param {object} params The options for this order\n   * @param {function} callback The callback function\n   * @return {object} The Response\n   * @private\n   */\n  _placeOrder(params, callback) {\n    let requiredParams = ['size', 'side', 'product_id'];\n\n    if (params.type !== 'market') {\n      requiredParams.push('price');\n    }\n\n    _.forEach(requiredParams, (param) => {\n      if (params[param] === undefined) {\n        throw new Error(`\"opts\" must include param \"${param}\"`);\n      }\n    });\n    let opts = {'body': params};\n    return this.post('orders', opts, callback);\n  }\n\n  /**\n   * buy\n   * @param {object} params The buy parameters\n   * @param {function} callback The callback function\n   * @return {object} Response from order\n   */\n  buy(params, callback) {\n    params.side = 'buy';\n    return this._placeOrder(params, callback);\n  }\n\n  /**\n   * sell\n   * @param {object} params The sell parameters\n   * @param {function} callback The callback function\n   * @return {object} Response from order\n   */\n  sell(params, callback) {\n    params.side = 'sell';\n    return this._placeOrder(params, callback);\n  }\n\n  /**\n   * cancelOrder\n   * @param {string|function} orderID The order or callback\n   * @param {function|null} callback The callback function\n   * @return {object} Response from delete\n   */\n  cancelOrder(orderID, callback) {\n    if (!callback && (typeof orderID === 'function')) {\n      callback = orderID;\n      callback(new Error('must provide an orderID or consider cancelOrders'));\n      return;\n    }\n\n    return this.delete(['orders', orderID], callback);\n  }\n\n  /**\n   * cancelOrders\n   * @param {function} callback The callback function\n   * @return {object} Response from delete\n   */\n  cancelOrders(callback) {\n    return this.delete('orders', callback);\n  }\n\n  /**\n   * getProductOrderBook\n   * temp over ride public call to get Product OrderBook\n   * @param {object|function} args The args or callback\n   * @param {string} productId The Product to get\n   * @param {function|null} callback The callback function\n   * @return {OrderBook} The Products order Book\n   */\n  getProductOrderBook(args, productId, callback) {\n    args = args || {};\n    if (!callback && (typeof args === 'function')) {\n      callback = args;\n      args = {};\n    }\n\n    let opts = {'qs': args};\n    return this.get(['products', productId, 'book'], opts, callback);\n  }\n\n  /**\n   * cancelAllOrders\n   * @param {object|function} args The args or callback\n   * @param {function} callback The callback function\n   */\n  cancelAllOrders(args, callback) {\n    let currentDeletedOrders = [];\n    let totalDeletedOrders = [];\n    let query = true;\n    let response;\n\n    args = args || {};\n    if (!callback && (typeof args === 'function')) {\n      callback = args;\n      args = {};\n    }\n\n    let opts = {'qs': args};\n\n    /**\n     * deleteOrders\n     * @param {function} done The callback function\n     */\n    const deleteOrders = (done) => {\n      this.delete('orders', opts, (err, resp, data) => {\n        if (err) {\n          done(err);\n          return;\n        }\n\n        if ((resp && resp.statusCode != 200) || !data) {\n          let err = new Error('Failed to cancel all orders');\n          query = false;\n          done(err);\n          return;\n        }\n\n        currentDeletedOrders = data;\n        totalDeletedOrders = totalDeletedOrders.concat(currentDeletedOrders);\n        response = resp;\n\n        done();\n      });\n    };\n\n    async.doWhilst(\n      deleteOrders,\n      untilEmpty,\n      completed\n    );\n\n    /**\n     * untilEmpty\n     * @return {boolean} Filter check for empty\n     */\n    function untilEmpty() {\n      return (currentDeletedOrders.length > 0 && query);\n    }\n\n    /**\n     * Completed\n     * @param {error} err The Error\n     */\n    function completed(err) {\n      callback(err, response, totalDeletedOrders);\n    }\n  }\n\n  /**\n   * getOrders\n   * @param {object|function} args The args or Callback\n   * @param {function|null} callback The callback function\n   * @return {object} The Orders\n   */\n  getOrders(args, callback) {\n    args = args || {};\n    if (!callback && (typeof args === 'function')) {\n      callback = args;\n      args = {};\n    }\n\n    let opts = {'qs': args};\n    return this.get('orders', opts, callback);\n  }\n\n  /**\n   * getOrder by OrderId\n   * @param {string|function} orderID The OrderId or Callback\n   * @param {function|null} callback The Callback function\n   * @return {object} The Order\n   */\n  getOrder(orderID, callback) {\n    if (!callback && (typeof orderID === 'function')) {\n      callback = orderID;\n      callback(new Error('must provide an orderID or consider getOrders'));\n      return;\n    }\n\n    return this.get(['orders', orderID], callback);\n  }\n\n  /**\n   * getFills\n   * @param {object|function} args Arguments or Callback\n   * @param {function|null} callback A callback Function\n   * @return {object} The fills\n   */\n  getFills(args, callback) {\n    args = args || {};\n    if (!callback && (typeof args === 'function')) {\n      callback = args;\n      args = {};\n    }\n\n    let opts = {'qs': args};\n    return this.get('fills', opts, callback);\n  }\n\n  /**\n   * deposit\n   * @param {object} params A list of parameters\n   * @param {function} callback The callback function\n   * @return {object} Response from post\n   */\n  deposit(params, callback) {\n    params.type = 'deposit';\n    return this._transferFunds(params, callback);\n  }\n\n  /**\n   * withdraw\n   * @param {object} params A list of Parameters\n   * @param {function} callback A callback function\n   * @return {object} Response from post\n   */\n  withdraw(params, callback) {\n    params.type = 'withdraw';\n    return this._transferFunds(params, callback);\n  }\n\n  /**\n   * transferFunds\n   * @param {object} params A list of parameters\n   * @param {function} callback A Callback Function\n   * @return {object} The request response\n   * @private\n   */\n  _transferFunds(params, callback) {\n    _.forEach(['type', 'amount', 'coinbase_account_id'], (param) => {\n      if (params[param] === undefined) {\n        throw new Error(`\"opts\" must include param \"${param}\"`);\n      }\n    });\n    let opts = {'body': params};\n    return this.post('transfers', opts, callback);\n  }\n}\n\nmodule.exports = AuthenticatedClient;\n"
+  },
+  {
+    "__docId__": 1,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "isNode",
+    "memberof": "lib/clients/authenticated.js",
+    "longname": "lib/clients/authenticated.js~isNode",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/clients/authenticated.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 15,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 2,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "queryString",
+    "memberof": "lib/clients/authenticated.js",
+    "longname": "lib/clients/authenticated.js~queryString",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/clients/authenticated.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 16,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 3,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "async",
+    "memberof": "lib/clients/authenticated.js",
+    "longname": "lib/clients/authenticated.js~async",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/clients/authenticated.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 17,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 4,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "PublicClient",
+    "memberof": "lib/clients/authenticated.js",
+    "longname": "lib/clients/authenticated.js~PublicClient",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/clients/authenticated.js",
+    "importStyle": null,
+    "description": "",
+    "lineNumber": 22,
+    "ignore": true,
+    "type": {
+      "nullable": null,
+      "types": [
+        "PublicClient"
+      ],
+      "spread": false,
+      "description": null
+    }
+  },
+  {
+    "__docId__": 5,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "_",
+    "memberof": "lib/clients/authenticated.js",
+    "longname": "lib/clients/authenticated.js~_",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/clients/authenticated.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 24,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 6,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "request",
+    "memberof": "lib/clients/authenticated.js",
+    "longname": "lib/clients/authenticated.js~request",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/clients/authenticated.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 28,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 7,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "crypto",
+    "memberof": "lib/clients/authenticated.js",
+    "longname": "lib/clients/authenticated.js~crypto",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/clients/authenticated.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 29,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 8,
+    "kind": "class",
+    "static": true,
+    "variation": null,
+    "name": "AuthenticatedClient",
+    "memberof": "lib/clients/authenticated.js",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient",
+    "access": null,
+    "export": true,
+    "importPath": "gdax/lib/clients/authenticated.js",
+    "importStyle": "AuthenticatedClient",
+    "description": "Authenticated Client",
+    "lineNumber": 34,
+    "interface": false,
+    "extends": [
+      "PublicClient"
+    ]
+  },
+  {
+    "__docId__": 9,
+    "kind": "constructor",
+    "static": false,
+    "variation": null,
+    "name": "constructor",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#constructor",
+    "access": null,
+    "description": "Create new Authenticated Client",
+    "lineNumber": 42,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "key",
+        "description": "super secret key"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "b64secret",
+        "description": "super secret"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "passphrase",
+        "description": "super secret password"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "apiURI",
+        "description": "URi of the webservice"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 10,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "key",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#key",
+    "access": null,
+    "description": null,
+    "lineNumber": 44,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 11,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "b64secret",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#b64secret",
+    "access": null,
+    "description": null,
+    "lineNumber": 45,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 12,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "passphrase",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#passphrase",
+    "access": null,
+    "description": null,
+    "lineNumber": 46,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 13,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "get",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#get",
+    "access": null,
+    "description": "Get request",
+    "lineNumber": 53,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "...object"
+        ],
+        "spread": true,
+        "optional": false,
+        "name": "args",
+        "description": "The arguments to send"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 14,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "post",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#post",
+    "access": null,
+    "description": "Post request",
+    "lineNumber": 61,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "...object"
+        ],
+        "spread": true,
+        "optional": false,
+        "name": "args",
+        "description": "The arguments to send"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 15,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "put",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#put",
+    "access": null,
+    "description": "Put request",
+    "lineNumber": 69,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "...object"
+        ],
+        "spread": true,
+        "optional": false,
+        "name": "args",
+        "description": "The arguments to send"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 16,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "delete",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#delete",
+    "access": null,
+    "description": "Delete request",
+    "lineNumber": 77,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "...object"
+        ],
+        "spread": true,
+        "optional": false,
+        "name": "args",
+        "description": "The arguments to send"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 17,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "request",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#request",
+    "access": null,
+    "description": "Request",
+    "lineNumber": 88,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "method",
+        "description": "Which type of request"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "array",
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "uriParts",
+        "description": "A route or collection of routes"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "object",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "opts",
+        "description": "The options for this request"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function",
+          "null"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "Callback function"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 18,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "_getSignature",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#_getSignature",
+    "access": "private",
+    "description": "_getSignature",
+    "lineNumber": 118,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "method",
+        "description": "Type of request"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "relativeURI",
+        "description": "URI for resource"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "opts",
+        "description": "Options"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Signature"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 19,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getAccounts",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#getAccounts",
+    "access": null,
+    "description": "getAccounts",
+    "lineNumber": 145,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Object"
+      ],
+      "spread": false,
+      "description": "The Response"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 20,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getAccount",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#getAccount",
+    "access": null,
+    "description": "getAccount",
+    "lineNumber": 155,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "accountID",
+        "description": "The Account"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Response"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 21,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getAccountHistory",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#getAccountHistory",
+    "access": null,
+    "description": "getAccountHistory",
+    "lineNumber": 166,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "accountID",
+        "description": "The Account"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "object",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "args",
+        "description": "The args or callback"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Response"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 22,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getAccountHolds",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#getAccountHolds",
+    "access": null,
+    "description": "getAccountHolds",
+    "lineNumber": 184,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "accountID",
+        "description": "The Account"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "object",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "args",
+        "description": "The args or callback"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Response"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 23,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "_placeOrder",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#_placeOrder",
+    "access": "private",
+    "description": "placeOrder",
+    "lineNumber": 202,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "params",
+        "description": "The options for this order"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Response"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 24,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "buy",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#buy",
+    "access": null,
+    "description": "buy",
+    "lineNumber": 224,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "params",
+        "description": "The buy parameters"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "Response from order"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 25,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "sell",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#sell",
+    "access": null,
+    "description": "sell",
+    "lineNumber": 235,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "params",
+        "description": "The sell parameters"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "Response from order"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 26,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "cancelOrder",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#cancelOrder",
+    "access": null,
+    "description": "cancelOrder",
+    "lineNumber": 246,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "orderID",
+        "description": "The order or callback"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function",
+          "null"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "Response from delete"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 27,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "cancelOrders",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#cancelOrders",
+    "access": null,
+    "description": "cancelOrders",
+    "lineNumber": 261,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "Response from delete"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 28,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getProductOrderBook",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#getProductOrderBook",
+    "access": null,
+    "description": "getProductOrderBook\ntemp over ride public call to get Product OrderBook",
+    "lineNumber": 273,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "args",
+        "description": "The args or callback"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "productId",
+        "description": "The Product to get"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function",
+          "null"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "OrderBook"
+      ],
+      "spread": false,
+      "description": "The Products order Book"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 29,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "cancelAllOrders",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#cancelAllOrders",
+    "access": null,
+    "description": "cancelAllOrders",
+    "lineNumber": 289,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "args",
+        "description": "The args or callback"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 30,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getOrders",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#getOrders",
+    "access": null,
+    "description": "getOrders",
+    "lineNumber": 358,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "args",
+        "description": "The args or Callback"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function",
+          "null"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Orders"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 31,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getOrder",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#getOrder",
+    "access": null,
+    "description": "getOrder by OrderId",
+    "lineNumber": 375,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "orderID",
+        "description": "The OrderId or Callback"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function",
+          "null"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The Callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Order"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 32,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getFills",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#getFills",
+    "access": null,
+    "description": "getFills",
+    "lineNumber": 391,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "args",
+        "description": "Arguments or Callback"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function",
+          "null"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "A callback Function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The fills"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 33,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "deposit",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#deposit",
+    "access": null,
+    "description": "deposit",
+    "lineNumber": 408,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "params",
+        "description": "A list of parameters"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "Response from post"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 34,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "withdraw",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#withdraw",
+    "access": null,
+    "description": "withdraw",
+    "lineNumber": 419,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "params",
+        "description": "A list of Parameters"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "A callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "Response from post"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 35,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "_transferFunds",
+    "memberof": "lib/clients/authenticated.js~AuthenticatedClient",
+    "longname": "lib/clients/authenticated.js~AuthenticatedClient#_transferFunds",
+    "access": "private",
+    "description": "transferFunds",
+    "lineNumber": 431,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "params",
+        "description": "A list of parameters"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "A Callback Function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The request response"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 36,
+    "kind": "file",
+    "static": true,
+    "variation": null,
+    "name": "lib/clients/public.js",
+    "memberof": null,
+    "longname": "lib/clients/public.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 11,
+    "content": "/**\n > THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n > IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n > FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n > AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n > SOFTWARE.\n */\n\n'use strict';\n\nconst isNode = require('detect-node');\nconst request = isNode ? require('request') : require('browser-request');\nconst Readable = require('stream').Readable;\n\nconst API_LIMIT = 100;\n\n/**\n * PublicClient\n */\nclass PublicClient {\n  /**\n   * Create new Public Client\n   * @param {string} productID The Product\n   * @param {string} apiURI URI of the resource\n   */\n  constructor(productID, apiURI) {\n    this.productID = productID || 'BTC-USD';\n    this.apiURI = apiURI || 'https://api.gdax.com';\n  }\n\n  /**\n   * get\n   * @param {...object} args The arguments\n   */\n  get(...args) {\n    this.request('get', ...args);\n  }\n\n  /**\n   * post\n   * @param {...object} args The arguments\n   */\n  post(...args) {\n    this.request('post', ...args);\n  }\n\n  /**\n   * put\n   * @param {...object} args The arguments\n   */\n  put(...args) {\n    this.request('put', ...args);\n  }\n\n  /**\n   * delete\n   * @param {...object} args The arguments\n   */\n  delete(...args) {\n    this.request('delete', ...args);\n  }\n\n  /**\n   * addHeaders\n   * @param {object} obj The headers to add\n   * @param {object} additional Extra headers\n   * @return {object} The header object\n   */\n  addHeaders(obj, additional) {\n    obj.headers = obj.headers || {};\n    return Object.assign(obj.headers, {\n      'User-Agent': 'gdax-node-client',\n      'Accept': 'application/json',\n      'Content-Type': 'application/json',\n    }, additional);\n  }\n\n  /**\n   * makeRelativeURI\n   * @param {array|string} parts The URI parts\n   * @return {string} Joined parts\n   */\n  makeRelativeURI(parts) {\n    if (!Array.isArray(parts)) parts = [parts];\n    return `/${parts.join('/')}`;\n  }\n\n  /**\n   * makeAbsoluteURI\n   * @param {string} relativeURI A relative path\n   * @return {string} The Absolute path\n   */\n  makeAbsoluteURI(relativeURI) {\n    return `${this.apiURI}${relativeURI}`;\n  }\n\n  /**\n   * makeRequestCallback\n   * @param {function} callback The callback function\n   * @return {function} A callback function\n   */\n  makeRequestCallback(callback) {\n    return (err, response, data) => {\n      try {\n        data = JSON.parse(data);\n      } catch (e) {\n        data = null;\n      }\n      callback(err, response, data);\n    };\n  }\n\n  /**\n   * request\n   * @param {string} method Type of Request\n   * @param {array|string} uriParts URI array or string\n   * @param {object|function} opts The options or callback\n   * @param {function|null} callback The callback function\n   */\n  request(method, uriParts, opts, callback) {\n    opts = opts || {};\n    if (!callback && (typeof opts === 'function')) {\n      callback = opts;\n      opts = {};\n    }\n    if (!callback) {\n      throw new Error('Must supply a callback.');\n    }\n    Object.assign(opts, {\n      'method': method.toUpperCase(),\n      'uri': this.makeAbsoluteURI(this.makeRelativeURI(uriParts)),\n    });\n    this.addHeaders(opts);\n    request(opts, this.makeRequestCallback(callback));\n  }\n\n  /**\n   * getProducts\n   * @param {function} callback The callback function\n   * @return {object} The Response\n   */\n  getProducts(callback) {\n    return this.get('products', callback);\n  }\n\n  /**\n   * getProductOrderBook\n   * @param {object|function} args The args or callback\n   * @param {function|null} callback The callback function\n   * @return {object} The Response\n   */\n  getProductOrderBook(args, callback) {\n    args = args || {};\n    if (!callback && (typeof args === 'function')) {\n      callback = args;\n      args = {};\n    }\n\n    let opts = {'qs': args};\n    return this.get(['products', this.productID, 'book'], opts, callback);\n  }\n\n  /**\n   * getProductTicker\n   * @param {function} callback The callback function\n   * @return {object} The Response\n   */\n  getProductTicker(callback) {\n    return this.get(['products', this.productID, 'ticker'], callback);\n  }\n\n  /**\n   * getProductTrades\n   * @param {object|function} args The args or callback\n   * @param {function|null} callback The callback function\n   * @return {object} The Response\n   */\n  getProductTrades(args, callback) {\n    args = args || {};\n    if (!callback && (typeof args === 'function')) {\n      callback = args;\n      args = {};\n    }\n\n    let opts = {'qs': args};\n    return this.get(['products', this.productID, 'trades'], opts, callback);\n  }\n\n  /**\n   * getProductTradeStream\n   * @param {number} tradesFrom Number of Trades from\n   * @param {number|function} tradesTo Number of Trades to or callback\n   * @return {object} Stream of trades\n   */\n  getProductTradeStream(tradesFrom, tradesTo) {\n    let shouldStop = null;\n\n    if (typeof tradesTo === 'function') {\n      shouldStop = tradesTo;\n      tradesTo = null;\n    }\n\n    let rs = new Readable({objectMode: true});\n    let started = false;\n\n    rs._read = () => {\n      if (!started) {\n        started = true;\n        this.fetchTrades(this, rs, tradesFrom, tradesTo, shouldStop, 0);\n      }\n    };\n\n    return rs;\n  }\n\n  /**\n   * fetchTrades\n   * @param {object} ctx The context\n   * @param {object} stream The Stream\n   * @param {number} tradesFrom Number of trades from\n   * @param {number} tradesTo Number of trades to\n   * @param {boolean|function} shouldStop Should it stop\n   */\n  fetchTrades(ctx, stream, tradesFrom, tradesTo, shouldStop) {\n    let after = tradesFrom + API_LIMIT + 1;\n    let loop = true;\n\n    if (tradesTo && tradesTo <= after) {\n      after = tradesTo;\n      loop = false;\n    }\n\n    let opts = {before: tradesFrom, after: after, limit: API_LIMIT};\n\n    this.getProductTrades(opts, (err, resp, data) => {\n      if (err) {\n        stream.emit('error', err);\n        return;\n      }\n\n      if (resp.statusCode === 429) {\n        // rate-limited, try again\n        setTimeout(() => {\n          this.fetchTrades(ctx, stream, tradesFrom, tradesTo, shouldStop);\n        }, 900);\n        return;\n      }\n\n      if (resp.statusCode !== 200) {\n        stream.emit('error',\n          new Error('Encountered status code ' + resp.statusCode)\n        );\n      }\n\n      for (let i = data.length - 1; i >= 0; i--) {\n        if (shouldStop && shouldStop(data[i])) {\n          stream.push(null);\n          return;\n        }\n\n        stream.push(data[i]);\n      }\n\n      if (!loop) {\n        stream.push(null);\n        return;\n      }\n      let currentFrom = tradesFrom + API_LIMIT;\n      this.fetchTrades(ctx, stream, currentFrom, tradesTo, shouldStop);\n    });\n  }\n\n  /**\n   * getProductHistoricRates\n   * @param {object|function} args The args or callback\n   * @param {function|null} callback The callback function\n   * @return {object} The Response\n   */\n  getProductHistoricRates(args, callback) {\n    args = args || {};\n    if (!callback && (typeof args === 'function')) {\n      callback = args;\n      args = {};\n    }\n\n    let opts = {'qs': args};\n    return this.get(['products', this.productID, 'candles'], opts, callback);\n  }\n\n  /**\n   * getProduct24HrStats\n   * @param {function} callback The callback function\n   * @return {object} The Response\n   */\n  getProduct24HrStats(callback) {\n    return this.get(['products', this.productID, 'stats'], callback);\n  }\n\n  /**\n   * getCurrencies\n   * @param {function} callback The callback function\n   * @return {object} The Response\n   */\n  getCurrencies(callback) {\n    return this.get('currencies', callback);\n  }\n\n  /**\n   * getTime\n   * @param {function} callback The callback function\n   * @return {object} The Response\n   */\n  getTime(callback) {\n    return this.get('time', callback);\n  }\n}\n\nmodule.exports = PublicClient;\n"
+  },
+  {
+    "__docId__": 37,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "isNode",
+    "memberof": "lib/clients/public.js",
+    "longname": "lib/clients/public.js~isNode",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/clients/public.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 13,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 38,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "request",
+    "memberof": "lib/clients/public.js",
+    "longname": "lib/clients/public.js~request",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/clients/public.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 14,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 39,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "Readable",
+    "memberof": "lib/clients/public.js",
+    "longname": "lib/clients/public.js~Readable",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/clients/public.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 15,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 40,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "API_LIMIT",
+    "memberof": "lib/clients/public.js",
+    "longname": "lib/clients/public.js~API_LIMIT",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/clients/public.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 17,
+    "undocument": true,
+    "type": {
+      "types": [
+        "number"
+      ]
+    }
+  },
+  {
+    "__docId__": 41,
+    "kind": "class",
+    "static": true,
+    "variation": null,
+    "name": "PublicClient",
+    "memberof": "lib/clients/public.js",
+    "longname": "lib/clients/public.js~PublicClient",
+    "access": null,
+    "export": true,
+    "importPath": "gdax/lib/clients/public.js",
+    "importStyle": "PublicClient",
+    "description": "PublicClient",
+    "lineNumber": 22,
+    "interface": false
+  },
+  {
+    "__docId__": 42,
+    "kind": "constructor",
+    "static": false,
+    "variation": null,
+    "name": "constructor",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#constructor",
+    "access": null,
+    "description": "Create new Public Client",
+    "lineNumber": 28,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "productID",
+        "description": "The Product"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "apiURI",
+        "description": "URI of the resource"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 43,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "productID",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#productID",
+    "access": null,
+    "description": null,
+    "lineNumber": 29,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 44,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "apiURI",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#apiURI",
+    "access": null,
+    "description": null,
+    "lineNumber": 30,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 45,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "get",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#get",
+    "access": null,
+    "description": "get",
+    "lineNumber": 37,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "...object"
+        ],
+        "spread": true,
+        "optional": false,
+        "name": "args",
+        "description": "The arguments"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 46,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "post",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#post",
+    "access": null,
+    "description": "post",
+    "lineNumber": 45,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "...object"
+        ],
+        "spread": true,
+        "optional": false,
+        "name": "args",
+        "description": "The arguments"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 47,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "put",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#put",
+    "access": null,
+    "description": "put",
+    "lineNumber": 53,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "...object"
+        ],
+        "spread": true,
+        "optional": false,
+        "name": "args",
+        "description": "The arguments"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 48,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "delete",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#delete",
+    "access": null,
+    "description": "delete",
+    "lineNumber": 61,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "...object"
+        ],
+        "spread": true,
+        "optional": false,
+        "name": "args",
+        "description": "The arguments"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 49,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "addHeaders",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#addHeaders",
+    "access": null,
+    "description": "addHeaders",
+    "lineNumber": 71,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "obj",
+        "description": "The headers to add"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "additional",
+        "description": "Extra headers"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The header object"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 50,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "makeRelativeURI",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#makeRelativeURI",
+    "access": null,
+    "description": "makeRelativeURI",
+    "lineNumber": 85,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "array",
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "parts",
+        "description": "The URI parts"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "string"
+      ],
+      "spread": false,
+      "description": "Joined parts"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 51,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "makeAbsoluteURI",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#makeAbsoluteURI",
+    "access": null,
+    "description": "makeAbsoluteURI",
+    "lineNumber": 95,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "relativeURI",
+        "description": "A relative path"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "string"
+      ],
+      "spread": false,
+      "description": "The Absolute path"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 52,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "makeRequestCallback",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#makeRequestCallback",
+    "access": null,
+    "description": "makeRequestCallback",
+    "lineNumber": 104,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "function"
+      ],
+      "spread": false,
+      "description": "A callback function"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 53,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "request",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#request",
+    "access": null,
+    "description": "request",
+    "lineNumber": 122,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "method",
+        "description": "Type of Request"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "array",
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "uriParts",
+        "description": "URI array or string"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "object",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "opts",
+        "description": "The options or callback"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function",
+          "null"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 54,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getProducts",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#getProducts",
+    "access": null,
+    "description": "getProducts",
+    "lineNumber": 144,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Response"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 55,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getProductOrderBook",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#getProductOrderBook",
+    "access": null,
+    "description": "getProductOrderBook",
+    "lineNumber": 154,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "args",
+        "description": "The args or callback"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function",
+          "null"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Response"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 56,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getProductTicker",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#getProductTicker",
+    "access": null,
+    "description": "getProductTicker",
+    "lineNumber": 170,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Response"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 57,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getProductTrades",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#getProductTrades",
+    "access": null,
+    "description": "getProductTrades",
+    "lineNumber": 180,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "args",
+        "description": "The args or callback"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function",
+          "null"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Response"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 58,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getProductTradeStream",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#getProductTradeStream",
+    "access": null,
+    "description": "getProductTradeStream",
+    "lineNumber": 197,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "number"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "tradesFrom",
+        "description": "Number of Trades from"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "number",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "tradesTo",
+        "description": "Number of Trades to or callback"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "Stream of trades"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 59,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "fetchTrades",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#fetchTrades",
+    "access": null,
+    "description": "fetchTrades",
+    "lineNumber": 226,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "ctx",
+        "description": "The context"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "stream",
+        "description": "The Stream"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "number"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "tradesFrom",
+        "description": "Number of trades from"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "number"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "tradesTo",
+        "description": "Number of trades to"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "boolean",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "shouldStop",
+        "description": "Should it stop"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 60,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getProductHistoricRates",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#getProductHistoricRates",
+    "access": null,
+    "description": "getProductHistoricRates",
+    "lineNumber": 281,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object",
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "args",
+        "description": "The args or callback"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function",
+          "null"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Response"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 61,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getProduct24HrStats",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#getProduct24HrStats",
+    "access": null,
+    "description": "getProduct24HrStats",
+    "lineNumber": 297,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Response"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 62,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getCurrencies",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#getCurrencies",
+    "access": null,
+    "description": "getCurrencies",
+    "lineNumber": 306,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Response"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 63,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getTime",
+    "memberof": "lib/clients/public.js~PublicClient",
+    "longname": "lib/clients/public.js~PublicClient#getTime",
+    "access": null,
+    "description": "getTime",
+    "lineNumber": 315,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "callback",
+        "description": "The callback function"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "The Response"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 64,
+    "kind": "file",
+    "static": true,
+    "variation": null,
+    "name": "lib/clients/websocket.js",
+    "memberof": null,
+    "longname": "lib/clients/websocket.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 13,
+    "content": "/**\n > THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n > IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n > FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n > AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n > SOFTWARE.\n */\n\n/* eslint camelcase: [\"error\", {properties: \"never\"}] */\n\n'use strict';\n\n/**\n * Event model\n * @ignore\n */\nconst EventEmitter = require('eventemitter2').EventEmitter2;\nconst isNode = require('detect-node');\nconst WebSockets = require('websocket');\n\n/**\n * WebSocket Client\n */\nclass WebSocketClient extends EventEmitter {\n  /**\n   * Create WebSocket Client\n   * @param {string} productID The Product\n   * @param {string} websocketURI URI to the websocket resource\n   */\n  constructor(productID, websocketURI) {\n    super();\n    this.productID = productID || 'BTC-USD';\n    this.websocketURI = websocketURI || 'wss://ws-feed.gdax.com';\n    this.connect();\n  }\n\n  /**\n   * connect\n   */\n  connect() {\n    if (this.socket) {\n      this.socket.close();\n    }\n\n    let WSClient = isNode ? WebSockets.client : WebSockets.w3cwebsocket;\n    this.socket = new WSClient(this.websocketURI);\n    this.socket.onmessage = (...args) => this.onMessage(...args);\n    this.socket.onopen = (...args) => this.onOpen(...args);\n    this.socket.onclose = (...args) => this.onClose(...args);\n  };\n\n  /**\n   * disconnect\n   */\n  disconnect() {\n    if (!this.socket) {\n      throw new Error('Could not disconnect (not connected)');\n    }\n\n    this.socket.close();\n  }\n\n  /**\n   * onOpen\n   */\n  onOpen() {\n    this.emit('open');\n    // noinspection Eslint\n    let subscribeMessage = {\n      type: 'subscribe',\n      product_id: this.productID,\n    };\n    this.socket.send(JSON.stringify(subscribeMessage));\n\n    // Set a 30 second ping to keep connection alive\n    this.pinger = setInterval(() => {\n      if (typeof this.socket.ping !== 'undefined')\n        this.socket.ping('keepalive');\n    }, 30000);\n  }\n\n  /**\n   * onClose\n   */\n  onClose() {\n    clearInterval(this.pinger);\n    this.socket = null;\n    this.emit('close');\n  }\n\n  /**\n   * onMessage\n   * @param {object} data A Response\n   */\n  onMessage(data) {\n    this.emit('message', JSON.parse(data.data));\n  }\n\n}\n\nmodule.exports = WebSocketClient;\n"
+  },
+  {
+    "__docId__": 65,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "EventEmitter",
+    "memberof": "lib/clients/websocket.js",
+    "longname": "lib/clients/websocket.js~EventEmitter",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/clients/websocket.js",
+    "importStyle": null,
+    "description": "Event model",
+    "lineNumber": 19,
+    "ignore": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 66,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "isNode",
+    "memberof": "lib/clients/websocket.js",
+    "longname": "lib/clients/websocket.js~isNode",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/clients/websocket.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 20,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 67,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "WebSockets",
+    "memberof": "lib/clients/websocket.js",
+    "longname": "lib/clients/websocket.js~WebSockets",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/clients/websocket.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 21,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 68,
+    "kind": "class",
+    "static": true,
+    "variation": null,
+    "name": "WebSocketClient",
+    "memberof": "lib/clients/websocket.js",
+    "longname": "lib/clients/websocket.js~WebSocketClient",
+    "access": null,
+    "export": true,
+    "importPath": "gdax/lib/clients/websocket.js",
+    "importStyle": "WebSocketClient",
+    "description": "WebSocket Client",
+    "lineNumber": 26,
+    "interface": false,
+    "extends": [
+      "EventEmitter"
+    ]
+  },
+  {
+    "__docId__": 69,
+    "kind": "constructor",
+    "static": false,
+    "variation": null,
+    "name": "constructor",
+    "memberof": "lib/clients/websocket.js~WebSocketClient",
+    "longname": "lib/clients/websocket.js~WebSocketClient#constructor",
+    "access": null,
+    "description": "Create WebSocket Client",
+    "lineNumber": 32,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "productID",
+        "description": "The Product"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "websocketURI",
+        "description": "URI to the websocket resource"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 70,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "productID",
+    "memberof": "lib/clients/websocket.js~WebSocketClient",
+    "longname": "lib/clients/websocket.js~WebSocketClient#productID",
+    "access": null,
+    "description": null,
+    "lineNumber": 34,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 71,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "websocketURI",
+    "memberof": "lib/clients/websocket.js~WebSocketClient",
+    "longname": "lib/clients/websocket.js~WebSocketClient#websocketURI",
+    "access": null,
+    "description": null,
+    "lineNumber": 35,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 72,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "connect",
+    "memberof": "lib/clients/websocket.js~WebSocketClient",
+    "longname": "lib/clients/websocket.js~WebSocketClient#connect",
+    "access": null,
+    "description": "connect",
+    "lineNumber": 42,
+    "params": [],
+    "generator": false
+  },
+  {
+    "__docId__": 73,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "socket",
+    "memberof": "lib/clients/websocket.js~WebSocketClient",
+    "longname": "lib/clients/websocket.js~WebSocketClient#socket",
+    "access": null,
+    "description": null,
+    "lineNumber": 48,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 74,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "disconnect",
+    "memberof": "lib/clients/websocket.js~WebSocketClient",
+    "longname": "lib/clients/websocket.js~WebSocketClient#disconnect",
+    "access": null,
+    "description": "disconnect",
+    "lineNumber": 57,
+    "params": [],
+    "generator": false
+  },
+  {
+    "__docId__": 75,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "onOpen",
+    "memberof": "lib/clients/websocket.js~WebSocketClient",
+    "longname": "lib/clients/websocket.js~WebSocketClient#onOpen",
+    "access": null,
+    "description": "onOpen",
+    "lineNumber": 68,
+    "params": [],
+    "generator": false
+  },
+  {
+    "__docId__": 76,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "pinger",
+    "memberof": "lib/clients/websocket.js~WebSocketClient",
+    "longname": "lib/clients/websocket.js~WebSocketClient#pinger",
+    "access": null,
+    "description": null,
+    "lineNumber": 78,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 77,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "onClose",
+    "memberof": "lib/clients/websocket.js~WebSocketClient",
+    "longname": "lib/clients/websocket.js~WebSocketClient#onClose",
+    "access": null,
+    "description": "onClose",
+    "lineNumber": 87,
+    "params": [],
+    "generator": false
+  },
+  {
+    "__docId__": 78,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "socket",
+    "memberof": "lib/clients/websocket.js~WebSocketClient",
+    "longname": "lib/clients/websocket.js~WebSocketClient#socket",
+    "access": null,
+    "description": null,
+    "lineNumber": 89,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 79,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "onMessage",
+    "memberof": "lib/clients/websocket.js~WebSocketClient",
+    "longname": "lib/clients/websocket.js~WebSocketClient#onMessage",
+    "access": null,
+    "description": "onMessage",
+    "lineNumber": 97,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "data",
+        "description": "A Response"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 80,
+    "kind": "file",
+    "static": true,
+    "variation": null,
+    "name": "lib/orderbook.js",
+    "memberof": null,
+    "longname": "lib/orderbook.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 11,
+    "content": "/**\n > THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n > IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n > FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n > AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n > SOFTWARE.\n */\n\n'use strict';\n\nconst RBTree = require('bintrees').RBTree;\nconst num = require('num');\nconst assert = require('assert');\n\n/**\n * OrderBook\n */\nclass OrderBook {\n  /**\n   * Create a new OrderBook\n   */\n  constructor() {\n    // Orders hashed by ID\n    this._ordersByID = {};\n\n    this._bids = new RBTree((a, b) => {\n      return a.price.cmp(b.price);\n    });\n\n    this._asks = new RBTree((a, b) => {\n      return a.price.cmp(b.price);\n    });\n  }\n\n  /**\n   * _getTree\n   * @param {string} side which side of the trade\n   * @return {RBTree} The RBTree\n   * @private\n   */\n  _getTree(side) {\n    return side == 'buy' ? this._bids : this._asks;\n  }\n\n  /**\n   * state\n   * @param {OrderBook} book The OrderBook\n   * @return {OrderBook} book A OrderBook\n   */\n  state(book) {\n    if (book) {\n      book.bids.forEach((order) => {\n        order = {\n          id: order[2],\n          side: 'buy',\n          price: num(order[0]),\n          size: num(order[1]),\n        };\n        this.add(order);\n      });\n\n      book.asks.forEach((order) => {\n        order = {\n          id: order[2],\n          side: 'sell',\n          price: num(order[0]),\n          size: num(order[1]),\n        };\n        this.add(order);\n      });\n    } else {\n      book = {\n        asks: [],\n        bids: [],\n      };\n      this._bids.reach((bid) => {\n        bid.orders.forEach((order) => {\n          book.bids.push(order);\n        });\n      });\n\n      this._asks.each((ask) => {\n        ask.orders.forEach((order) => {\n          book.asks.push(order);\n        });\n      });\n\n      return book;\n    }\n  }\n\n  /**\n   * get Order by OrderId\n   * @param {string} orderId\n   * @return {object} order based on id\n   */\n  get(orderId) {\n    return this._ordersByID[orderId];\n  }\n\n  /**\n   * Add order\n   * @param {object} order The Order\n   */\n  add(order) {\n    order = {\n      id: order.order_id || order.id,\n      side: order.side,\n      price: num(order.price),\n      size: num(order.size || order.remaining_size),\n    };\n\n    let tree = this._getTree(order.side);\n    let node = tree.find({price: order.price});\n\n    if (!node) {\n      node = {\n        price: order.price,\n        orders: [],\n      };\n      tree.insert(node);\n    }\n\n    node.orders.push(order);\n    this._ordersByID[order.id] = order;\n  }\n\n  /**\n   * Remove Order by OrderId\n   * @param {string} orderId The OrderID\n   */\n  remove(orderId) {\n    let order = this.get(orderId);\n\n    if (!order) {\n      return;\n    }\n\n    let tree = this._getTree(order.side);\n    let node = tree.find({price: order.price});\n    assert(node);\n    let orders = node.orders;\n\n    orders.splice(orders.indexOf(order), 1);\n\n    if (orders.length === 0) {\n      tree.remove(node);\n    }\n\n    delete this._ordersByID[order.id];\n  }\n\n  /**\n   * match parameter\n   * @param {object} match Object Match\n   */\n  match(match) {\n    let size = num(match.size);\n    let price = num(match.price);\n    let tree = this._getTree(match.side);\n    let node = tree.find({price: price});\n    assert(node);\n\n    let order = node.orders[0];\n    assert.equal(order.id, match.maker_order_id);\n\n    order.size = order.size.sub(size);\n    this._ordersByID[order.id] = order;\n\n    assert(order.size >= 0);\n\n    if (order.size.eq(0)) {\n      this.remove(order.id);\n    }\n  }\n\n  /**\n   * change\n   * @param {Object} change The changed object\n   */\n  change(change) {\n    let size = num(change.new_size);\n    let price = num(change.price);\n    let order = this.get(change.order_id);\n    let tree = this._getTree(change.side);\n    let node = tree.find({price: price});\n\n    if (!node || node.orders.indexOf(order) < 0) {\n      return;\n    }\n\n    let nodeOrder = node.orders[node.orders.indexOf(order)];\n\n    let newSize = parseFloat(order.size);\n    let oldSize = parseFloat(change.old_size);\n    assert.equal(oldSize, newSize);\n\n    nodeOrder.size = size;\n    this._ordersByID[nodeOrder.id] = nodeOrder;\n  }\n}\n\n/**\n *\n * @type {OrderBook}\n */\nmodule.exports = OrderBook;\n"
+  },
+  {
+    "__docId__": 81,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "RBTree",
+    "memberof": "lib/orderbook.js",
+    "longname": "lib/orderbook.js~RBTree",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/orderbook.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 13,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 82,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "num",
+    "memberof": "lib/orderbook.js",
+    "longname": "lib/orderbook.js~num",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/orderbook.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 14,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 83,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "assert",
+    "memberof": "lib/orderbook.js",
+    "longname": "lib/orderbook.js~assert",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/orderbook.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 15,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 84,
+    "kind": "class",
+    "static": true,
+    "variation": null,
+    "name": "OrderBook",
+    "memberof": "lib/orderbook.js",
+    "longname": "lib/orderbook.js~OrderBook",
+    "access": null,
+    "export": true,
+    "importPath": "gdax/lib/orderbook.js",
+    "importStyle": "OrderBook",
+    "description": "OrderBook",
+    "lineNumber": 20,
+    "interface": false
+  },
+  {
+    "__docId__": 85,
+    "kind": "constructor",
+    "static": false,
+    "variation": null,
+    "name": "constructor",
+    "memberof": "lib/orderbook.js~OrderBook",
+    "longname": "lib/orderbook.js~OrderBook#constructor",
+    "access": null,
+    "description": "Create a new OrderBook",
+    "lineNumber": 24,
+    "params": [],
+    "generator": false
+  },
+  {
+    "__docId__": 86,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "_ordersByID",
+    "memberof": "lib/orderbook.js~OrderBook",
+    "longname": "lib/orderbook.js~OrderBook#_ordersByID",
+    "access": null,
+    "description": null,
+    "lineNumber": 26,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 87,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "_bids",
+    "memberof": "lib/orderbook.js~OrderBook",
+    "longname": "lib/orderbook.js~OrderBook#_bids",
+    "access": null,
+    "description": null,
+    "lineNumber": 28,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 88,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "_asks",
+    "memberof": "lib/orderbook.js~OrderBook",
+    "longname": "lib/orderbook.js~OrderBook#_asks",
+    "access": null,
+    "description": null,
+    "lineNumber": 32,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 89,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "_getTree",
+    "memberof": "lib/orderbook.js~OrderBook",
+    "longname": "lib/orderbook.js~OrderBook#_getTree",
+    "access": "private",
+    "description": "_getTree",
+    "lineNumber": 43,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "side",
+        "description": "which side of the trade"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "RBTree"
+      ],
+      "spread": false,
+      "description": "The RBTree"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 90,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "state",
+    "memberof": "lib/orderbook.js~OrderBook",
+    "longname": "lib/orderbook.js~OrderBook#state",
+    "access": null,
+    "description": "state",
+    "lineNumber": 52,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "OrderBook"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "book",
+        "description": "The OrderBook"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "OrderBook"
+      ],
+      "spread": false,
+      "description": "book A OrderBook"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 91,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "get",
+    "memberof": "lib/orderbook.js~OrderBook",
+    "longname": "lib/orderbook.js~OrderBook#get",
+    "access": null,
+    "description": "get Order by OrderId",
+    "lineNumber": 99,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "orderId",
+        "description": ""
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "order based on id"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 92,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "add",
+    "memberof": "lib/orderbook.js~OrderBook",
+    "longname": "lib/orderbook.js~OrderBook#add",
+    "access": null,
+    "description": "Add order",
+    "lineNumber": 107,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "order",
+        "description": "The Order"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 93,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "remove",
+    "memberof": "lib/orderbook.js~OrderBook",
+    "longname": "lib/orderbook.js~OrderBook#remove",
+    "access": null,
+    "description": "Remove Order by OrderId",
+    "lineNumber": 134,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "orderId",
+        "description": "The OrderID"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 94,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "match",
+    "memberof": "lib/orderbook.js~OrderBook",
+    "longname": "lib/orderbook.js~OrderBook#match",
+    "access": null,
+    "description": "match parameter",
+    "lineNumber": 159,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "match",
+        "description": "Object Match"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 95,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "change",
+    "memberof": "lib/orderbook.js~OrderBook",
+    "longname": "lib/orderbook.js~OrderBook#change",
+    "access": null,
+    "description": "change",
+    "lineNumber": 183,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "Object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "change",
+        "description": "The changed object"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 96,
+    "kind": "file",
+    "static": true,
+    "variation": null,
+    "name": "lib/orderbook_sync.js",
+    "memberof": null,
+    "longname": "lib/orderbook_sync.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 11,
+    "content": "/**\n > THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n > IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n > FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n > AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n > SOFTWARE.\n */\n\n'use strict';\n\nconst WebSocketClient = require('./clients/websocket.js');\nconst PublicClient = require('./clients/public.js');\nconst OrderBook = require('./orderbook.js');\n\nlet _ = {\n  forEach: require('lodash.foreach'),\n};\n\n/**\n *\n * @type {OrderBookSync}\n */\nclass OrderBookSync extends WebSocketClient {\n  /**\n   * OrderBookSync constructor\n   * @param {string} productID The product\n   * @param {string} apiURI URI for api resource\n   * @param {string} websocketURI URI for socket resource\n   * @param {AuthenticatedClient} authenticatedClient A authorized client\n   */\n  constructor(productID, apiURI, websocketURI, authenticatedClient) {\n    super();\n    this.productID = productID || 'BTC-USD';\n    this.apiURI = apiURI || 'https://api.gdax.com';\n    this.websocketURI = websocketURI || 'wss://ws-feed.gdax.com';\n    this.authenticatedClient = authenticatedClient;\n\n    this._queue = [];\n    this._sequence = -1;\n    this.loadOrderBook();\n  }\n\n  /**\n   * onMessage\n   * @param {object} data The Response\n   */\n  onMessage(data) {\n    data = JSON.parse(data.data);\n\n    if (this._sequence === -1) {\n      // OrderBook snapshot not loaded yet\n      this._queue.push(data);\n    } else {\n      this.processMessage(data);\n    }\n  };\n\n  /**\n   * loadOrderBook\n   */\n  loadOrderBook() {\n    let bookLevel = 3;\n    let args = {'level': bookLevel};\n\n    this.book = new OrderBook();\n\n    const cb = (err, response, body) => {\n      if (err) throw new Error(`Failed to load orderbook: ${err}`);\n\n      if (response.statusCode !== 200)\n        throw new Error(`Failed to load orderbook: ${response.statusCode}`);\n\n      let data = JSON.parse(response.body);\n      this.book.state(data);\n      this._sequence = data.sequence;\n      _.forEach(this._queue, (data) => this.processMessage(data));\n      this._queue = [];\n    };\n\n    if (this.authenticatedClient) {\n      this.authenticatedClient.getProductOrderBook(args, this.productID, cb);\n    } else {\n      if (!this.publicClient) {\n        this.publicClient = new PublicClient(this.productID, this.apiURI);\n      }\n      this.publicClient.getProductOrderBook(args, cb);\n    }\n  };\n\n  /**\n   * processMessage\n   * @param {object} data A Response\n   */\n  processMessage(data) {\n    if (this._sequence == -1) {\n      // Resync is in process\n      return;\n    }\n    if (data.sequence <= this._sequence) {\n      // Skip this one, since it was already processed\n      return;\n    }\n\n    if (data.sequence != this._sequence + 1) {\n      // Dropped a message, start a resync process\n      this._queue = [];\n      this._sequence = -1;\n\n      this.loadOrderBook();\n      return;\n    }\n\n    this._sequence = data.sequence;\n\n    switch (data.type) {\n      case 'open':\n        this.book.add(data);\n        break;\n\n      case 'done':\n        this.book.remove(data.order_id);\n        break;\n\n      case 'match':\n        this.book.match(data);\n        break;\n\n      case 'change':\n        this.book.change(data);\n        break;\n    }\n  }\n}\n\nmodule.exports = OrderBookSync;\n"
+  },
+  {
+    "__docId__": 97,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "WebSocketClient",
+    "memberof": "lib/orderbook_sync.js",
+    "longname": "lib/orderbook_sync.js~WebSocketClient",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/orderbook_sync.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 13,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 98,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "PublicClient",
+    "memberof": "lib/orderbook_sync.js",
+    "longname": "lib/orderbook_sync.js~PublicClient",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/orderbook_sync.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 14,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 99,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "OrderBook",
+    "memberof": "lib/orderbook_sync.js",
+    "longname": "lib/orderbook_sync.js~OrderBook",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/orderbook_sync.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 15,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 100,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "_",
+    "memberof": "lib/orderbook_sync.js",
+    "longname": "lib/orderbook_sync.js~_",
+    "access": null,
+    "export": false,
+    "importPath": "gdax/lib/orderbook_sync.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 17,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 101,
+    "kind": "class",
+    "static": true,
+    "variation": null,
+    "name": "OrderBookSync",
+    "memberof": "lib/orderbook_sync.js",
+    "longname": "lib/orderbook_sync.js~OrderBookSync",
+    "access": null,
+    "export": true,
+    "importPath": "gdax/lib/orderbook_sync.js",
+    "importStyle": "OrderBookSync",
+    "description": "",
+    "lineNumber": 25,
+    "type": {
+      "nullable": null,
+      "types": [
+        "OrderBookSync"
+      ],
+      "spread": false,
+      "description": null
+    },
+    "interface": false,
+    "extends": [
+      "WebSocketClient"
+    ]
+  },
+  {
+    "__docId__": 102,
+    "kind": "constructor",
+    "static": false,
+    "variation": null,
+    "name": "constructor",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#constructor",
+    "access": null,
+    "description": "OrderBookSync constructor",
+    "lineNumber": 33,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "productID",
+        "description": "The product"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "apiURI",
+        "description": "URI for api resource"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "websocketURI",
+        "description": "URI for socket resource"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "AuthenticatedClient"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "authenticatedClient",
+        "description": "A authorized client"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 103,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "productID",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#productID",
+    "access": null,
+    "description": null,
+    "lineNumber": 35,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 104,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "apiURI",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#apiURI",
+    "access": null,
+    "description": null,
+    "lineNumber": 36,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 105,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "websocketURI",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#websocketURI",
+    "access": null,
+    "description": null,
+    "lineNumber": 37,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 106,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "authenticatedClient",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#authenticatedClient",
+    "access": null,
+    "description": null,
+    "lineNumber": 38,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 107,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "_queue",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#_queue",
+    "access": null,
+    "description": null,
+    "lineNumber": 40,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 108,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "_sequence",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#_sequence",
+    "access": null,
+    "description": null,
+    "lineNumber": 41,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 109,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "onMessage",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#onMessage",
+    "access": null,
+    "description": "onMessage",
+    "lineNumber": 49,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "data",
+        "description": "The Response"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 110,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "loadOrderBook",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#loadOrderBook",
+    "access": null,
+    "description": "loadOrderBook",
+    "lineNumber": 63,
+    "params": [],
+    "generator": false
+  },
+  {
+    "__docId__": 111,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "book",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#book",
+    "access": null,
+    "description": null,
+    "lineNumber": 67,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 112,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "_sequence",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#_sequence",
+    "access": null,
+    "description": null,
+    "lineNumber": 77,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 113,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "_queue",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#_queue",
+    "access": null,
+    "description": null,
+    "lineNumber": 79,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 114,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "publicClient",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#publicClient",
+    "access": null,
+    "description": null,
+    "lineNumber": 86,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 115,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "processMessage",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#processMessage",
+    "access": null,
+    "description": "processMessage",
+    "lineNumber": 96,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "data",
+        "description": "A Response"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 116,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "_queue",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#_queue",
+    "access": null,
+    "description": null,
+    "lineNumber": 108,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 117,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "_sequence",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#_sequence",
+    "access": null,
+    "description": null,
+    "lineNumber": 109,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 118,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "_sequence",
+    "memberof": "lib/orderbook_sync.js~OrderBookSync",
+    "longname": "lib/orderbook_sync.js~OrderBookSync#_sequence",
+    "access": null,
+    "description": null,
+    "lineNumber": 115,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 120,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Infinity",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Infinity",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Infinity",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 121,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "NaN",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/NaN",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~NaN",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 122,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "undefined",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/undefined",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~undefined",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 123,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "null",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/null",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~null",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 124,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Object",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Object",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 125,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "object",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~object",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 126,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Function",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Function",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 127,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "function",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~function",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 128,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Boolean",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Boolean",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Boolean",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 129,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "boolean",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Boolean",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~boolean",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 130,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Symbol",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Symbol",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 131,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Error",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Error",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 132,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "EvalError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/EvalError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~EvalError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 133,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "InternalError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/InternalError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~InternalError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 134,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "RangeError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RangeError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~RangeError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 135,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "ReferenceError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ReferenceError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~ReferenceError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 136,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "SyntaxError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SyntaxError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~SyntaxError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 137,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "TypeError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypeError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~TypeError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 138,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "URIError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/URIError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~URIError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 139,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Number",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Number",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 140,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "number",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~number",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 141,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Date",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Date",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 142,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "String",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~String",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 143,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "string",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~string",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 144,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "RegExp",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~RegExp",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 145,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 146,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Int8Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Int8Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Int8Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 147,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Uint8Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Uint8Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 148,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Uint8ClampedArray",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8ClampedArray",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Uint8ClampedArray",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 149,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Int16Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Int16Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Int16Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 150,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Uint16Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint16Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Uint16Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 151,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Int32Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Int32Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Int32Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 152,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Uint32Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint32Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Uint32Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 153,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Float32Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float32Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Float32Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 154,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Float64Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float64Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Float64Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 155,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Map",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Map",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 156,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Set",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Set",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Set",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 157,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "WeakMap",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WeakMap",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~WeakMap",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 158,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "WeakSet",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WeakSet",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~WeakSet",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 159,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "ArrayBuffer",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~ArrayBuffer",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 160,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "DataView",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~DataView",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 161,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "JSON",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~JSON",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 162,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Promise",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Promise",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 163,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Generator",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Generator",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Generator",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 164,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "GeneratorFunction",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/GeneratorFunction",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~GeneratorFunction",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 165,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Reflect",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Reflect",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 166,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Proxy",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Proxy",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 168,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "CanvasRenderingContext2D",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~CanvasRenderingContext2D",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 169,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "DocumentFragment",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/DocumentFragment",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~DocumentFragment",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 170,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Element",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/Element",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~Element",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 171,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Event",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/Event",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~Event",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 172,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Node",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/Node",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~Node",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 173,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "NodeList",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/NodeList",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~NodeList",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 174,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "XMLHttpRequest",
+    "externalLink": "https://developer.mozilla.org/en/docs/Web/API/XMLHttpRequest",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~XMLHttpRequest",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 175,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "AudioContext",
+    "externalLink": "https://developer.mozilla.org/en/docs/Web/API/AudioContext",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~AudioContext",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 176,
+    "kind": "testFile",
+    "static": true,
+    "variation": null,
+    "name": "tests/authenticated.js",
+    "memberof": null,
+    "longname": "tests/authenticated.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 13,
+    "content": "/**\n > THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n > IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n > FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n > AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n > SOFTWARE.\n */\n\n/* eslint camelcase: [\"error\", {properties: \"never\"}] */\n\n'use strict';\n\nlet assert = require('assert');\nlet nock = require('nock');\n\nlet AuthenticatedClient = require('../lib/clients/authenticated');\n\nlet key = 'key';\nlet secret = 'secret';\nlet passphrase = 'passphrase';\n\nlet EXCHANGE_API_URL = 'https://api.gdax.com';\n\nlet authClient = new AuthenticatedClient(key, secret, passphrase);\n/** @test {AuthenticatedClient} */\ndescribe('AuthenticatedClient', () => {\n  /** @test {AuthenticatedClient#_getSignature} */\n  test('._getSignature', () => {\n    let method = 'PUT';\n    let relativeURI = '/orders';\n    let opts = {\n      method: 'PUT',\n      uri: 'https://api.gdax.com/orders',\n    };\n\n    let sig = authClient._getSignature(method, relativeURI, opts);\n\n    assert.equal(sig['CB-ACCESS-KEY'], key);\n    assert.equal(sig['CB-ACCESS-PASSPHRASE'], passphrase);\n\n    assert(sig['CB-ACCESS-TIMESTAMP']);\n    assert(sig['CB-ACCESS-SIGN']);\n  });\n\n  /** @test {AuthenticatedClient#getAccount} */\n  test('get account', (done) => {\n    let expectedResponse = {\n      'id': 'a1b2c3d4',\n      'balance': '1.100',\n      'holds': '0.100',\n      'available': '1.00',\n      'currency': 'USD',\n    };\n\n    nock(EXCHANGE_API_URL)\n      .get('/accounts/test-id')\n      .reply(200, expectedResponse);\n\n    authClient.getAccount('test-id', (err, resp, data) => {\n      assert.ifError(err);\n      assert.deepEqual(data, expectedResponse);\n\n      nock.cleanAll();\n      done();\n    });\n  });\n\n  /** @test {AuthenticatedClient#getAccounts} */\n  test('get accounts', (done) => {\n    let expectedResponse = [{\n      'id': 'a1b2c3d4',\n      'balance': '1.100',\n      'holds': '0.100',\n      'available': '1.00',\n      'currency': 'USD',\n    }];\n\n    nock(EXCHANGE_API_URL)\n      .get('/accounts')\n      .reply(200, expectedResponse);\n\n    authClient.getAccounts((err, resp, data) => {\n      assert.ifError(err);\n      assert.deepEqual(data, expectedResponse);\n\n      nock.cleanAll();\n      done();\n    });\n  });\n\n  /** @test {AuthenticatedClient#getAccountHistory} */\n  test('get account history', (done) => {\n    let expectedResponse = [{\n      'id': '100',\n      'created_at': '2014-11-07T08:19:27.028459Z',\n      'amount': '0.001',\n      'balance': '239.669',\n      'type': 'fee',\n      'details': {\n        'order_id': 'd50ec984-77a8-460a-b958-66f114b0de9b',\n        'trade_id': '74',\n        'product_id': 'BTC-USD',\n      },\n    }];\n\n    nock(EXCHANGE_API_URL)\n      .get('/accounts/test-id/ledger')\n      .reply(200, expectedResponse);\n\n    authClient.getAccountHistory('test-id', (err, resp, data) => {\n      assert.ifError(err);\n      assert.deepEqual(data, expectedResponse);\n\n      nock.cleanAll();\n      done();\n    });\n  });\n\n  /** @test {AuthenticatedClient#getAccountHolds} */\n  test('get account holds', (done) => {\n    let expectedResponse = [{\n      'id': '82dcd140-c3c7-4507-8de4-2c529cd1a28f',\n      'account_id': 'e0b3f39a-183d-453e-b754-0c13e5bab0b3',\n      'created_at': '2014-11-06T10:34:47.123456Z',\n      'updated_at': '2014-11-06T10:40:47.123456Z',\n      'amount': '4.23',\n      'type': 'order',\n      'ref': '0a205de4-dd35-4370-a285-fe8fc375a273',\n    }];\n\n    nock(EXCHANGE_API_URL)\n      .get('/accounts/test-id/holds')\n      .reply(200, expectedResponse);\n\n    authClient.getAccountHolds('test-id', (err, resp, data) => {\n      assert.ifError(err);\n      assert.deepEqual(data, expectedResponse);\n\n      nock.cleanAll();\n      done();\n    });\n  });\n\n  /** @test {AuthenticatedClient#buy} */\n  test('buy order', (done) => {\n    // noinspection Eslint\n    let order = {\n      size: '10',\n      product_id: 'BTC-USD',\n      price: '100',\n    };\n\n    let expectedOrder = order;\n    expectedOrder.side = 'buy';\n\n    let expectedResponse = {\n      'id': '0428b97b-bec1-429e-a94c-59992926778d',\n    };\n\n    nock(EXCHANGE_API_URL)\n      .post('/orders', expectedOrder)\n      .reply(200, expectedResponse);\n\n    authClient.buy(order, (err, resp, data) => {\n      assert.ifError(err);\n      assert.deepEqual(data, expectedResponse);\n\n      nock.cleanAll();\n      done();\n    });\n  });\n\n  /** @test {AuthenticatedClient#sell} */\n  test('sell order', (done) => {\n    // noinspection Eslint\n    let order = {\n      size: '10',\n      product_id: 'BTC-USD',\n      price: '100',\n    };\n\n    let expectedOrder = order;\n    expectedOrder.side = 'sell';\n\n    let expectedResponse = {\n      'id': '0428b97b-bec1-429e-a94c-59992926778d',\n    };\n\n    nock(EXCHANGE_API_URL)\n      .post('/orders', expectedOrder)\n      .reply(200, expectedResponse);\n\n    authClient.sell(order, (err, resp, data) => {\n      assert.ifError(err);\n      assert.deepEqual(data, expectedResponse);\n\n      nock.cleanAll();\n      done();\n    });\n  });\n\n  /** @test {AuthenticatedClient#getProductOrderBook} */\n  test('get product orderbook', (done) => {\n    nock(EXCHANGE_API_URL)\n      .get('/products/BTC-USD/book?level=3')\n      .reply(200, {\n        asks: [],\n        bids: [],\n      });\n\n    authClient.getProductOrderBook({level: 3}, 'BTC-USD',\n      (err, resp, data) => {\n        assert(data);\n        done();\n      });\n  });\n\n  /** @test {AuthenticatedClient#cancelAllOrders} */\n  test('cancel all orders', (done) => {\n    // nock three requests to delete /orders\n\n    let cancelledOrdersOne = [\n      'deleted-id-1',\n      'deleted-id-2',\n      'deleted-id-3',\n      'deleted-id-4',\n    ];\n\n    let cancelledOrdersTwo = [\n      'deleted-id-5',\n      'deleted-id-6',\n      'deleted-id-7',\n      'deleted-id-8',\n    ];\n\n    let totalExpectedDeleted = cancelledOrdersOne.concat(cancelledOrdersTwo);\n\n    // first list of Id's that just got cancelled\n    nock(EXCHANGE_API_URL)\n      .delete('/orders')\n      .reply(200, cancelledOrdersOne);\n\n    // second list of Id's that just got cancelled\n    nock(EXCHANGE_API_URL)\n      .delete('/orders')\n      .reply(200, cancelledOrdersTwo);\n\n    // return empty array signalling the completion of all\n    // orders having been cancelled\n    nock(EXCHANGE_API_URL)\n      .delete('/orders')\n      .reply(200, []);\n\n    authClient.cancelAllOrders((err, resp, totalDeletedOrders) => {\n      assert.ifError(err);\n      assert.deepEqual(totalDeletedOrders, totalExpectedDeleted);\n\n      nock.cleanAll();\n      done();\n    });\n  });\n\n  /** @test {AuthenticatedClient#cancelOrder} */\n  test('should require orderID for cancelOrder', (done) => {\n    authClient.cancelOrder((err, resp, data) => {\n      assert(err);\n      done();\n    });\n  });\n\n  /** @test {AuthenticatedClient#getOrders} */\n  test('get orders', (done) => {\n    let expectedResponse = [{\n      'id': 'd50ec984-77a8-460a-b958-66f114b0de9b',\n      'size': '3.0',\n      'price': '100.23',\n      'product_id': 'BTC-USD',\n      'status': 'open',\n      'filled_size': '1.23',\n      'fill_fees': '0.001',\n      'settled': false,\n      'side': 'buy',\n      'created_at': '2014-11-14T06:39:55.189376Z',\n    }];\n\n    nock(EXCHANGE_API_URL)\n      .get('/orders')\n      .reply(200, expectedResponse);\n\n    authClient.getOrders((err, resp, data) => {\n      assert.ifError(err);\n      assert.deepEqual(data, expectedResponse);\n\n      nock.cleanAll();\n      done();\n    });\n  });\n\n  /** @test {AuthenticatedClient#getOrder} */\n  test('should require orderID for getOrder', (done) => {\n    authClient.getOrder((err, resp, data) => {\n      assert(err);\n      done();\n    });\n  });\n\n  /** @test {AuthenticatedClient#getFills} */\n  test('get fills', (done) => {\n    let expectedResponse = [{\n      'trade_id': 74,\n      'product_id': 'BTC-USD',\n      'price': '10.00',\n      'size': '0.01',\n      'order_id': 'd50ec984-77a8-460a-b958-66f114b0de9b',\n      'created_at': '2014-11-07T22:19:28.578544Z',\n      'liquidity': 'T',\n      'fee': '0.00025',\n      'settled': true,\n      'side': 'buy',\n    }];\n\n    nock(EXCHANGE_API_URL)\n      .get('/fills')\n      .reply(200, expectedResponse);\n\n\n    authClient.getFills((err, resp, data) => {\n      assert.ifError(err);\n      assert.deepEqual(data, expectedResponse);\n\n      nock.cleanAll();\n      done();\n    });\n  });\n\n  /** @test {AuthenticatedClient#deposit} */\n  test('deposit', (done) => {\n    let transfer = {\n      'amount': 10480,\n      'coinbase_account_id': 'test-id',\n    };\n\n    let expectedTransfer = transfer;\n    expectedTransfer.type = 'deposit';\n\n    nock(EXCHANGE_API_URL)\n      .post('/transfers', expectedTransfer)\n      .reply(200, {});\n\n    authClient.deposit(transfer, (err, resp, data) => {\n      assert.ifError(err);\n\n      nock.cleanAll();\n      done();\n    });\n  });\n\n  /** @test {AuthenticatedClient#withdraw} */\n  test('withdraw', (done) => {\n    let transfer = {\n      'amount': 10480,\n      'coinbase_account_id': 'test-id',\n    };\n\n    let expectedTransfer = transfer;\n    expectedTransfer.type = 'withdraw';\n\n    nock(EXCHANGE_API_URL)\n      .post('/transfers', expectedTransfer)\n      .reply(200, {});\n\n    authClient.withdraw(transfer, (err, resp, data) => {\n      assert.ifError(err);\n\n      nock.cleanAll();\n      done();\n    });\n  });\n\n  /** @test {AuthenticatedClient#cancelAllOrders} */\n  test('cancel all should be able to handle errors', (done) => {\n    nock(EXCHANGE_API_URL)\n      .delete('/orders')\n      .reply(404, null);\n\n    authClient.cancelAllOrders((err, resp, totalExpectedDeleted) => {\n      assert(err);\n\n      nock.cleanAll();\n      done();\n    });\n  });\n});\n"
+  },
+  {
+    "__docId__": 177,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe0",
+    "testId": 0,
+    "memberof": "tests/authenticated.js",
+    "testDepth": 0,
+    "longname": "tests/authenticated.js~describe0",
+    "access": null,
+    "description": "AuthenticatedClient",
+    "lineNumber": 28,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient"
+    ]
+  },
+  {
+    "__docId__": 178,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test1",
+    "testId": 1,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test1",
+    "access": null,
+    "description": "._getSignature",
+    "lineNumber": 30,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#_getSignature}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#_getSignature"
+    ]
+  },
+  {
+    "__docId__": 179,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test2",
+    "testId": 2,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test2",
+    "access": null,
+    "description": "get account",
+    "lineNumber": 48,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#getAccount}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#getAccount"
+    ]
+  },
+  {
+    "__docId__": 180,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test3",
+    "testId": 3,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test3",
+    "access": null,
+    "description": "get accounts",
+    "lineNumber": 71,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#getAccounts}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#getAccounts"
+    ]
+  },
+  {
+    "__docId__": 181,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test4",
+    "testId": 4,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test4",
+    "access": null,
+    "description": "get account history",
+    "lineNumber": 94,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#getAccountHistory}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#getAccountHistory"
+    ]
+  },
+  {
+    "__docId__": 182,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test5",
+    "testId": 5,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test5",
+    "access": null,
+    "description": "get account holds",
+    "lineNumber": 122,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#getAccountHolds}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#getAccountHolds"
+    ]
+  },
+  {
+    "__docId__": 183,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test6",
+    "testId": 6,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test6",
+    "access": null,
+    "description": "buy order",
+    "lineNumber": 147,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#buy}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#buy"
+    ]
+  },
+  {
+    "__docId__": 184,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test7",
+    "testId": 7,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test7",
+    "access": null,
+    "description": "sell order",
+    "lineNumber": 176,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#sell}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#sell"
+    ]
+  },
+  {
+    "__docId__": 185,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test8",
+    "testId": 8,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test8",
+    "access": null,
+    "description": "get product orderbook",
+    "lineNumber": 205,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#getProductOrderBook}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#getProductOrderBook"
+    ]
+  },
+  {
+    "__docId__": 186,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test9",
+    "testId": 9,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test9",
+    "access": null,
+    "description": "cancel all orders",
+    "lineNumber": 221,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#cancelAllOrders}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#cancelAllOrders"
+    ]
+  },
+  {
+    "__docId__": 187,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test10",
+    "testId": 10,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test10",
+    "access": null,
+    "description": "should require orderID for cancelOrder",
+    "lineNumber": 266,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#cancelOrder}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#cancelOrder"
+    ]
+  },
+  {
+    "__docId__": 188,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test11",
+    "testId": 11,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test11",
+    "access": null,
+    "description": "get orders",
+    "lineNumber": 274,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#getOrders}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#getOrders"
+    ]
+  },
+  {
+    "__docId__": 189,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test12",
+    "testId": 12,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test12",
+    "access": null,
+    "description": "should require orderID for getOrder",
+    "lineNumber": 302,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#getOrder}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#getOrder"
+    ]
+  },
+  {
+    "__docId__": 190,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test13",
+    "testId": 13,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test13",
+    "access": null,
+    "description": "get fills",
+    "lineNumber": 310,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#getFills}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#getFills"
+    ]
+  },
+  {
+    "__docId__": 191,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test14",
+    "testId": 14,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test14",
+    "access": null,
+    "description": "deposit",
+    "lineNumber": 339,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#deposit}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#deposit"
+    ]
+  },
+  {
+    "__docId__": 192,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test15",
+    "testId": 15,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test15",
+    "access": null,
+    "description": "withdraw",
+    "lineNumber": 361,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#withdraw}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#withdraw"
+    ]
+  },
+  {
+    "__docId__": 193,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test16",
+    "testId": 16,
+    "memberof": "tests/authenticated.js~describe0",
+    "testDepth": 1,
+    "longname": "tests/authenticated.js~describe0.test16",
+    "access": null,
+    "description": "cancel all should be able to handle errors",
+    "lineNumber": 383,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{AuthenticatedClient#cancelAllOrders}"
+      }
+    ],
+    "testTargets": [
+      "AuthenticatedClient#cancelAllOrders"
+    ]
+  },
+  {
+    "__docId__": 194,
+    "kind": "testFile",
+    "static": true,
+    "variation": null,
+    "name": "tests/orderbook.js",
+    "memberof": null,
+    "longname": "tests/orderbook.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 13,
+    "content": "/**\n > THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n > IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n > FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n > AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n > SOFTWARE.\n */\n\n/* eslint camelcase: [\"error\", {properties: \"never\"}] */\n\n'use strict';\n\nlet assert = require('assert');\n\nlet OrderBook = require('../lib/orderbook');\n\nlet checkState = (state, exp) => {\n  assert.deepEqual(JSON.parse(JSON.stringify(state)), exp);\n};\n/** @test {OrderBook} */\ndescribe('OrderBook', () => {\n  /** @test {OrderBook#add} */\n  test('add new orders', () => {\n    let state = {\n      bids: [\n        {\n          id: 'super-duper-id-2',\n          side: 'buy',\n          price: 201,\n          size: 10,\n        },\n        {\n          id: 'super-duper-id',\n          side: 'buy',\n          price: 200,\n          size: 10,\n        },\n      ],\n      asks: [],\n    };\n\n    let orderbook = new OrderBook();\n    orderbook.add(state.bids[0]);\n    orderbook.add(state.bids[1]);\n\n    checkState(orderbook.state(), state);\n  });\n\n  /** @test {OrderBook#remove} */\n  test('remove order', () => {\n    let apiState = {\n      bids: [\n        [201, 10, 'super-duper-id-2'],\n        [201, 10, 'super-duper-id-3'],\n        [200, 10, 'super-duper-id'],\n      ],\n      asks: [],\n    };\n\n    let state = {\n      bids: [\n        {\n          id: 'super-duper-id-2',\n          side: 'buy',\n          price: 201,\n          size: 10,\n        },\n        {\n          id: 'super-duper-id-3',\n          side: 'buy',\n          price: 201,\n          size: 10,\n        },\n        {\n          id: 'super-duper-id',\n          side: 'buy',\n          price: 200,\n          size: 10,\n        },\n      ],\n      asks: [],\n    };\n\n    let orderbook = new OrderBook();\n    orderbook.state(apiState);\n    checkState(orderbook.state(), state);\n\n    orderbook.remove('super-duper-id-3');\n    state.bids.splice(1, 1);\n    checkState(orderbook.state(), state);\n  });\n\n  /** @test {OrderBook#get} */\n  test('get order', () => {\n    let apiState = {\n      bids: [\n        [201, 10, 'super-duper-id-2'],\n        [200, 10, 'super-duper-id'],\n      ],\n      asks: [],\n    };\n\n    let expected = {\n      id: 'super-duper-id-2',\n      price: 201,\n      size: 10,\n      side: 'buy',\n    };\n\n    let orderbook = new OrderBook();\n    orderbook.state(apiState);\n    let order = orderbook.get('super-duper-id-2');\n\n    assert.deepEqual(JSON.parse(JSON.stringify(order)), expected);\n  });\n\n  /** @test {OrderBook#match} */\n  test('partial order match', () => {\n    let apiState = {\n      bids: [\n        [201, 10, 'super-duper-id-2'],\n        [200, 10, 'super-duper-id'],\n      ],\n      asks: [],\n    };\n\n    // noinspection Eslint\n    let match = {\n      maker_order_id: 'super-duper-id-2',\n      size: 5,\n      price: 201,\n      side: 'buy',\n    };\n\n    let expectedState = {\n      bids: [\n        {\n          id: 'super-duper-id-2',\n          side: 'buy',\n          price: 201,\n          size: 5,\n        },\n        {\n          id: 'super-duper-id',\n          side: 'buy',\n          price: 200,\n          size: 10,\n        },\n      ],\n      asks: [],\n    };\n\n    let orderbook = new OrderBook();\n    orderbook.state(apiState);\n    orderbook.match(match);\n\n    checkState(orderbook.state(), expectedState);\n  });\n\n  /** @test {OrderBook#change} */\n  test('full order match', () => {\n    let apiState = {\n      bids: [\n        [201, 10, 'super-duper-id-2'],\n        [200, 10, 'super-duper-id'],\n      ],\n      asks: [],\n    };\n\n    // noinspection Eslint\n    let match = {\n      maker_order_id: 'super-duper-id-2',\n      size: 10,\n      price: 201,\n      side: 'buy',\n    };\n\n    let expectedState = {\n      bids: [\n        {\n          id: 'super-duper-id',\n          side: 'buy',\n          price: 200,\n          size: 10,\n        },\n      ],\n      asks: [],\n    };\n\n    let orderbook = new OrderBook();\n    orderbook.state(apiState);\n    orderbook.match(match);\n\n    checkState(orderbook.state(), expectedState);\n  });\n\n  /** @test {OrderBook#add} */\n  test('order change', () => {\n    let apiState = {\n      bids: [\n        [201, 10, 'super-duper-id-2'],\n        [200, 10, 'super-duper-id'],\n      ],\n      asks: [],\n    };\n\n    // noinspection Eslint\n    let change = {\n      order_id: 'super-duper-id-2',\n      old_size: '10.0',\n      new_size: 3,\n      price: 201,\n      side: 'buy',\n    };\n\n    let expectedState = {\n      bids: [\n        {\n          id: 'super-duper-id-2',\n          side: 'buy',\n          price: 201,\n          size: 3,\n        },\n        {\n          id: 'super-duper-id',\n          side: 'buy',\n          price: 200,\n          size: 10,\n        },\n      ],\n      asks: [],\n    };\n\n    let orderbook = new OrderBook();\n    orderbook.state(apiState);\n    orderbook.change(change);\n\n    checkState(orderbook.state(), expectedState);\n  });\n});\n"
+  },
+  {
+    "__docId__": 195,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe17",
+    "testId": 17,
+    "memberof": "tests/orderbook.js",
+    "testDepth": 0,
+    "longname": "tests/orderbook.js~describe17",
+    "access": null,
+    "description": "OrderBook",
+    "lineNumber": 23,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{OrderBook}"
+      }
+    ],
+    "testTargets": [
+      "OrderBook"
+    ]
+  },
+  {
+    "__docId__": 196,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test18",
+    "testId": 18,
+    "memberof": "tests/orderbook.js~describe17",
+    "testDepth": 1,
+    "longname": "tests/orderbook.js~describe17.test18",
+    "access": null,
+    "description": "add new orders",
+    "lineNumber": 25,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{OrderBook#add}"
+      }
+    ],
+    "testTargets": [
+      "OrderBook#add"
+    ]
+  },
+  {
+    "__docId__": 197,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test19",
+    "testId": 19,
+    "memberof": "tests/orderbook.js~describe17",
+    "testDepth": 1,
+    "longname": "tests/orderbook.js~describe17.test19",
+    "access": null,
+    "description": "remove order",
+    "lineNumber": 52,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{OrderBook#remove}"
+      }
+    ],
+    "testTargets": [
+      "OrderBook#remove"
+    ]
+  },
+  {
+    "__docId__": 198,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test20",
+    "testId": 20,
+    "memberof": "tests/orderbook.js~describe17",
+    "testDepth": 1,
+    "longname": "tests/orderbook.js~describe17.test20",
+    "access": null,
+    "description": "get order",
+    "lineNumber": 96,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{OrderBook#get}"
+      }
+    ],
+    "testTargets": [
+      "OrderBook#get"
+    ]
+  },
+  {
+    "__docId__": 199,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test21",
+    "testId": 21,
+    "memberof": "tests/orderbook.js~describe17",
+    "testDepth": 1,
+    "longname": "tests/orderbook.js~describe17.test21",
+    "access": null,
+    "description": "partial order match",
+    "lineNumber": 120,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{OrderBook#match}"
+      }
+    ],
+    "testTargets": [
+      "OrderBook#match"
+    ]
+  },
+  {
+    "__docId__": 200,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test22",
+    "testId": 22,
+    "memberof": "tests/orderbook.js~describe17",
+    "testDepth": 1,
+    "longname": "tests/orderbook.js~describe17.test22",
+    "access": null,
+    "description": "full order match",
+    "lineNumber": 163,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{OrderBook#change}"
+      }
+    ],
+    "testTargets": [
+      "OrderBook#change"
+    ]
+  },
+  {
+    "__docId__": 201,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test23",
+    "testId": 23,
+    "memberof": "tests/orderbook.js~describe17",
+    "testDepth": 1,
+    "longname": "tests/orderbook.js~describe17.test23",
+    "access": null,
+    "description": "order change",
+    "lineNumber": 200,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{OrderBook#add}"
+      }
+    ],
+    "testTargets": [
+      "OrderBook#add"
+    ]
+  },
+  {
+    "__docId__": 202,
+    "kind": "testFile",
+    "static": true,
+    "variation": null,
+    "name": "tests/orderbook_sync_test.js",
+    "memberof": null,
+    "longname": "tests/orderbook_sync_test.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 10,
+    "content": "/**\n > THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n > IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n > FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n > AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n > SOFTWARE.\n */\n"
+  },
+  {
+    "__docId__": 203,
+    "kind": "testFile",
+    "static": true,
+    "variation": null,
+    "name": "tests/public_client.js",
+    "memberof": null,
+    "longname": "tests/public_client.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 13,
+    "content": "/**\n > THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n > IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n > FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n > AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n > SOFTWARE.\n */\n\n/* eslint camelcase: [\"error\", {properties: \"never\"}] */\n\nlet assert = require('assert');\nlet nock = require('nock');\n\nlet Gdax = require('../index.js');\nlet publicClient = new Gdax.PublicClient();\n\nlet EXCHANGE_API_URL = 'https://api.gdax.com';\n\ntest('get product trades', (done) => {\n  let expectedResponse = [{\n    'time': '2014-11-07T22:19:28.578544Z',\n    'trade_id': 74,\n    'price': '10.00000000',\n    'size': '0.01000000',\n    'side': 'buy',\n  }, {\n    'time': '2014-11-07T01:08:43.642366Z',\n    'trade_id': 73,\n    'price': '100.00000000',\n    'size': '0.01000000',\n    'side': 'sell',\n  }];\n\n  nock(EXCHANGE_API_URL)\n    .get('/products/BTC-USD/trades')\n    .reply(200, expectedResponse);\n\n  publicClient.getProductTrades((err, resp, data) => {\n    assert.ifError(err);\n    assert.deepEqual(data, expectedResponse);\n\n    nock.cleanAll();\n    done();\n  });\n});\n\ntest('public client should return values', (done) => {\n  // noinspection Eslint\n  nock(EXCHANGE_API_URL)\n    .get('/products/BTC-USD/ticker')\n    .reply(200, {\n      trade_id: 'test-id',\n      price: '9.00',\n      size: '5',\n    });\n\n  publicClient.getProductTicker((err, resp, data) => {\n    assert.ifError(err);\n\n    assert.equal(data.trade_id, 'test-id');\n    assert(data.price, '9.00');\n    assert(data.size, '5');\n\n    nock.cleanAll();\n    done();\n  });\n});\n\ntest('public client should stream trades', function(done) {\n  // noinspection Eslint\n  this.timeout(6000);\n\n  let last = 8408014;\n\n  publicClient.getProductTradeStream(last, 8409426)\n    .on('data', (data) => {\n      let current = data.trade_id;\n      assert.equal(typeof current, 'number');\n      assert.equal(current, last + 1,\n        `${current} is next in series, last: ${last}`\n      );\n      last = current;\n    })\n    .on('end', () => {\n      assert.equal(last, 8409425, 'ended on ' + last);\n      done();\n    });\n});\n\ntest('public client should stream trades with function', function(done) {\n  // noinspection Eslint\n  this.timeout(6000);\n\n  let last = 8408014;\n\n  publicClient.getProductTradeStream(last, (trade) => {\n    return Date.parse(trade.time) >= 1463068800000;\n  })\n    .on('data', (data) => {\n      let current = data.trade_id;\n      assert.equal(typeof current, 'number');\n      assert.equal(current, last + 1,\n        `${current} is next in series, last: ${last}`\n      );\n      last = current;\n    })\n    .on('end', () => {\n      assert.equal(last, 8409426, last);\n      done();\n    });\n});\n"
+  },
+  {
+    "__docId__": 204,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test24",
+    "testId": 24,
+    "memberof": "tests/public_client.js",
+    "testDepth": 0,
+    "longname": "tests/public_client.js~test24",
+    "access": null,
+    "description": "get product trades",
+    "lineNumber": 21
+  },
+  {
+    "__docId__": 205,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test25",
+    "testId": 25,
+    "memberof": "tests/public_client.js",
+    "testDepth": 0,
+    "longname": "tests/public_client.js~test25",
+    "access": null,
+    "description": "public client should return values",
+    "lineNumber": 49
+  },
+  {
+    "__docId__": 206,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test26",
+    "testId": 26,
+    "memberof": "tests/public_client.js",
+    "testDepth": 0,
+    "longname": "tests/public_client.js~test26",
+    "access": null,
+    "description": "public client should stream trades",
+    "lineNumber": 71
+  },
+  {
+    "__docId__": 207,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "test27",
+    "testId": 27,
+    "memberof": "tests/public_client.js",
+    "testDepth": 0,
+    "longname": "tests/public_client.js~test27",
+    "access": null,
+    "description": "public client should stream trades with function",
+    "lineNumber": 92
+  }
+]

@@ -1,0 +1,51 @@
+{
+  "coverage": "80.76%",
+  "expectCount": 78,
+  "actualCount": 63,
+  "files": {
+    "lib/clients/authenticated.js": {
+      "expectCount": 25,
+      "actualCount": 22,
+      "undocumentLines": [
+        45,
+        44,
+        46
+      ]
+    },
+    "lib/orderbook.js": {
+      "expectCount": 8,
+      "actualCount": 8,
+      "undocumentLines": []
+    },
+    "lib/orderbook_sync.js": {
+      "expectCount": 11,
+      "actualCount": 5,
+      "undocumentLines": [
+        36,
+        38,
+        67,
+        35,
+        86,
+        37
+      ]
+    },
+    "lib/clients/public.js": {
+      "expectCount": 23,
+      "actualCount": 21,
+      "undocumentLines": [
+        30,
+        29
+      ]
+    },
+    "lib/clients/websocket.js": {
+      "expectCount": 11,
+      "actualCount": 7,
+      "undocumentLines": [
+        78,
+        34,
+        48,
+        35
+      ]
+    }
+  }
+}

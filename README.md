@@ -1,4 +1,6 @@
 # GDAX
+[![Docs](https://tradelily.github.io/gdax-js/badge.svg)](https://tradelily.github.io/gdax-js/)
+
 The official Node.js library for the [GDAX
 API](https://docs.gdax.com/) (formerly Coinbase Exchange).
 
